@@ -90,7 +90,7 @@ func main() {
 	}
 	encryptor, err := crypto.NewEncryptor(encryptionKey)
 	if err != nil {
-		logger.Fatal("Failed to initialize encryptor", logger.Error(err.Error()))
+		logger.Fatal("Failed to initialize encryptor", zap.Error(err))
 	}
 
 	// Initialize JWT service

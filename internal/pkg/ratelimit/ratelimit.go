@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 type RateLimiter struct {
@@ -66,7 +66,7 @@ func (rl *RateLimiter) CheckLimit(ctx context.Context, key string, config RateLi
 	countCmd := pipe.ZCard(ctx, key)
 
 	// Add current request
-	pipe.ZAdd(ctx, key, &redis.Z{
+	pipe.ZAdd(ctx, key, redis.Z{
 		Score:  float64(now.UnixMilli()),
 		Member: fmt.Sprintf("%d", now.UnixNano()),
 	})
@@ -102,7 +102,7 @@ func (rl *RateLimiter) CheckLimitWithInfo(ctx context.Context, key string, confi
 	oldestCmd := pipe.ZRange(ctx, key, 0, 0)
 
 	// Add current request if within limit
-	pipe.ZAdd(ctx, key, &redis.Z{
+	pipe.ZAdd(ctx, key, redis.Z{
 		Score:  float64(now.UnixMilli()),
 		Member: fmt.Sprintf("%d", now.UnixNano()),
 	})
