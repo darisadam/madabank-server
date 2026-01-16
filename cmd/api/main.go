@@ -60,6 +60,9 @@ func main() {
 
 	logger.Info("Connected to database successfully")
 
+	// Start metrics collector goroutine
+	go collectSystemMetrics(db)
+
 	// Initialize JWT service
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
@@ -237,14 +240,22 @@ func collectSystemMetrics(db *sql.DB) {
 
 		// Collect user metrics
 		var totalUsers, activeUsers int
-		db.QueryRow("SELECT COUNT(*) FROM users WHERE deleted_at IS NULL").Scan(&totalUsers)
-		db.QueryRow("SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND is_active = true").Scan(&activeUsers)
+		if err := db.QueryRow("SELECT COUNT(*) FROM users WHERE deleted_at IS NULL").Scan(&totalUsers); err != nil {
+			logger.Error("Failed to collect total users metric", zap.Error(err))
+		}
+		if err := db.QueryRow("SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND is_active = true").Scan(&activeUsers); err != nil {
+			logger.Error("Failed to collect active users metric", zap.Error(err))
+		}
 		metrics.UpdateUserMetrics(totalUsers, activeUsers)
 
 		// Collect account metrics
 		var checkingCount, savingsCount int
-		db.QueryRow("SELECT COUNT(*) FROM accounts WHERE account_type = 'checking' AND status = 'active'").Scan(&checkingCount)
-		db.QueryRow("SELECT COUNT(*) FROM accounts WHERE account_type = 'savings' AND status = 'active'").Scan(&savingsCount)
+		if err := db.QueryRow("SELECT COUNT(*) FROM accounts WHERE account_type = 'checking' AND status = 'active'").Scan(&checkingCount); err != nil {
+			logger.Error("Failed to collect checking accounts metric", zap.Error(err))
+		}
+		if err := db.QueryRow("SELECT COUNT(*) FROM accounts WHERE account_type = 'savings' AND status = 'active'").Scan(&savingsCount); err != nil {
+			logger.Error("Failed to collect savings accounts metric", zap.Error(err))
+		}
 		metrics.UpdateAccountMetrics("checking", checkingCount)
 		metrics.UpdateAccountMetrics("savings", savingsCount)
 	}

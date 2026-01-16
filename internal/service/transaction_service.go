@@ -6,6 +6,7 @@ import (
 
 	"github.com/darisadam/madabank-server/internal/domain/audit"
 	"github.com/darisadam/madabank-server/internal/domain/transaction"
+	"github.com/darisadam/madabank-server/internal/pkg/metrics"
 	"github.com/darisadam/madabank-server/internal/repository"
 	"github.com/google/uuid"
 )
@@ -37,46 +38,57 @@ func NewTransactionService(
 }
 
 func (s *transactionService) Transfer(userID uuid.UUID, req *transaction.TransferRequest) (*transaction.Transaction, error) {
+	start := time.Now() // ADD THIS
+
 	// Parse UUIDs
 	fromAccountID, err := uuid.Parse(req.FromAccountID)
 	if err != nil {
+		metrics.RecordTransactionError("transfer", "invalid_from_account") // ADD THIS
 		return nil, fmt.Errorf("invalid from_account_id")
 	}
 
 	toAccountID, err := uuid.Parse(req.ToAccountID)
 	if err != nil {
+		metrics.RecordTransactionError("transfer", "invalid_to_account") // ADD THIS
 		return nil, fmt.Errorf("invalid to_account_id")
 	}
 
 	// Validate accounts are different
 	if fromAccountID == toAccountID {
+		metrics.RecordTransactionError("transfer", "same_account") // ADD THIS
 		return nil, fmt.Errorf("cannot transfer to the same account")
 	}
 
 	// Check idempotency - prevent duplicate transfers
 	existing, err := s.transactionRepo.GetByIdempotencyKey(req.IdempotencyKey)
 	if err == nil {
-		// Transaction already exists with this idempotency key
+		// Transaction already exists - record as successful (idempotency worked)
+		duration := time.Since(start).Seconds()                                         // ADD THIS
+		metrics.RecordTransaction("transfer", "completed", req.Amount, "USD", duration) // ADD THIS
 		return existing, nil
 	}
 
 	// Verify source account ownership
 	fromAccount, err := s.accountRepo.GetByID(fromAccountID)
 	if err != nil {
+		metrics.RecordTransactionError("transfer", "source_not_found") // ADD THIS
 		return nil, fmt.Errorf("source account not found")
 	}
 	if fromAccount.UserID != userID {
+		metrics.RecordTransactionError("transfer", "unauthorized") // ADD THIS
 		return nil, fmt.Errorf("unauthorized: source account does not belong to user")
 	}
 
 	// Verify destination account exists and is active
 	toAccount, err := s.accountRepo.GetByID(toAccountID)
 	if err != nil {
+		metrics.RecordTransactionError("transfer", "destination_not_found") // ADD THIS
 		return nil, fmt.Errorf("destination account not found")
 	}
 
 	// Validate currency match
 	if fromAccount.Currency != toAccount.Currency {
+		metrics.RecordTransactionError("transfer", "currency_mismatch") // ADD THIS
 		return nil, fmt.Errorf("currency mismatch: source account is %s, destination is %s", fromAccount.Currency, toAccount.Currency)
 	}
 
@@ -99,8 +111,13 @@ func (s *transactionService) Transfer(userID uuid.UUID, req *transaction.Transfe
 	// Execute transfer with ACID guarantees
 	err = s.transactionRepo.ExecuteTransfer(fromAccountID, toAccountID, req.Amount, txn)
 	if err != nil {
+		// Record failed transaction
+		duration := time.Since(start).Seconds()                                                     // ADD THIS
+		metrics.RecordTransaction("transfer", "failed", req.Amount, fromAccount.Currency, duration) // ADD THIS
+		metrics.RecordTransactionError("transfer", "execution_failed")                              // ADD THIS
+
 		// Log failed transaction attempt
-		_ = s.auditRepo.Create(&audit.AuditLog{
+		s.auditRepo.Create(&audit.AuditLog{
 			EventID:  uuid.New(),
 			UserID:   &userID,
 			Action:   "TRANSFER_FAILED",
@@ -116,8 +133,12 @@ func (s *transactionService) Transfer(userID uuid.UUID, req *transaction.Transfe
 		return nil, err
 	}
 
+	// Record successful transaction
+	duration := time.Since(start).Seconds()                                                        // ADD THIS
+	metrics.RecordTransaction("transfer", "completed", req.Amount, fromAccount.Currency, duration) // ADD THIS
+
 	// Log successful transaction
-	_ = s.auditRepo.Create(&audit.AuditLog{
+	s.auditRepo.Create(&audit.AuditLog{
 		EventID:  uuid.New(),
 		UserID:   &userID,
 		Action:   "TRANSFER_COMPLETED",
@@ -135,23 +156,30 @@ func (s *transactionService) Transfer(userID uuid.UUID, req *transaction.Transfe
 }
 
 func (s *transactionService) Deposit(userID uuid.UUID, req *transaction.DepositRequest) (*transaction.Transaction, error) {
+	start := time.Now()
+
 	accountID, err := uuid.Parse(req.AccountID)
 	if err != nil {
+		metrics.RecordTransactionError("deposit", "invalid_account")
 		return nil, fmt.Errorf("invalid account_id")
 	}
 
 	// Check idempotency
 	existing, err := s.transactionRepo.GetByIdempotencyKey(req.IdempotencyKey)
 	if err == nil {
+		duration := time.Since(start).Seconds()
+		metrics.RecordTransaction("deposit", "completed", req.Amount, "USD", duration)
 		return existing, nil
 	}
 
 	// Verify account ownership
 	account, err := s.accountRepo.GetByID(accountID)
 	if err != nil {
+		metrics.RecordTransactionError("deposit", "account_not_found")
 		return nil, fmt.Errorf("account not found")
 	}
 	if account.UserID != userID {
+		metrics.RecordTransactionError("deposit", "unauthorized")
 		return nil, fmt.Errorf("unauthorized: account does not belong to user")
 	}
 
@@ -173,7 +201,11 @@ func (s *transactionService) Deposit(userID uuid.UUID, req *transaction.DepositR
 	// Execute deposit
 	err = s.transactionRepo.ExecuteDeposit(accountID, req.Amount, txn)
 	if err != nil {
-		_ = s.auditRepo.Create(&audit.AuditLog{
+		duration := time.Since(start).Seconds()
+		metrics.RecordTransaction("deposit", "failed", req.Amount, account.Currency, duration)
+		metrics.RecordTransactionError("deposit", "execution_failed")
+
+		s.auditRepo.Create(&audit.AuditLog{
 			EventID:  uuid.New(),
 			UserID:   &userID,
 			Action:   "DEPOSIT_FAILED",
@@ -187,7 +219,10 @@ func (s *transactionService) Deposit(userID uuid.UUID, req *transaction.DepositR
 		return nil, err
 	}
 
-	_ = s.auditRepo.Create(&audit.AuditLog{
+	duration := time.Since(start).Seconds()
+	metrics.RecordTransaction("deposit", "completed", req.Amount, account.Currency, duration)
+
+	s.auditRepo.Create(&audit.AuditLog{
 		EventID:  uuid.New(),
 		UserID:   &userID,
 		Action:   "DEPOSIT_COMPLETED",
@@ -202,23 +237,30 @@ func (s *transactionService) Deposit(userID uuid.UUID, req *transaction.DepositR
 }
 
 func (s *transactionService) Withdrawal(userID uuid.UUID, req *transaction.WithdrawalRequest) (*transaction.Transaction, error) {
+	start := time.Now()
+
 	accountID, err := uuid.Parse(req.AccountID)
 	if err != nil {
+		metrics.RecordTransactionError("withdrawal", "invalid_account")
 		return nil, fmt.Errorf("invalid account_id")
 	}
 
 	// Check idempotency
 	existing, err := s.transactionRepo.GetByIdempotencyKey(req.IdempotencyKey)
 	if err == nil {
+		duration := time.Since(start).Seconds()
+		metrics.RecordTransaction("withdrawal", "completed", req.Amount, "USD", duration)
 		return existing, nil
 	}
 
 	// Verify account ownership
 	account, err := s.accountRepo.GetByID(accountID)
 	if err != nil {
+		metrics.RecordTransactionError("withdrawal", "account_not_found")
 		return nil, fmt.Errorf("account not found")
 	}
 	if account.UserID != userID {
+		metrics.RecordTransactionError("withdrawal", "unauthorized")
 		return nil, fmt.Errorf("unauthorized: account does not belong to user")
 	}
 
@@ -240,7 +282,11 @@ func (s *transactionService) Withdrawal(userID uuid.UUID, req *transaction.Withd
 	// Execute withdrawal
 	err = s.transactionRepo.ExecuteWithdrawal(accountID, req.Amount, txn)
 	if err != nil {
-		_ = s.auditRepo.Create(&audit.AuditLog{
+		duration := time.Since(start).Seconds()
+		metrics.RecordTransaction("withdrawal", "failed", req.Amount, account.Currency, duration)
+		metrics.RecordTransactionError("withdrawal", "execution_failed")
+
+		s.auditRepo.Create(&audit.AuditLog{
 			EventID:  uuid.New(),
 			UserID:   &userID,
 			Action:   "WITHDRAWAL_FAILED",
@@ -254,7 +300,10 @@ func (s *transactionService) Withdrawal(userID uuid.UUID, req *transaction.Withd
 		return nil, err
 	}
 
-	_ = s.auditRepo.Create(&audit.AuditLog{
+	duration := time.Since(start).Seconds()
+	metrics.RecordTransaction("withdrawal", "completed", req.Amount, account.Currency, duration)
+
+	s.auditRepo.Create(&audit.AuditLog{
 		EventID:  uuid.New(),
 		UserID:   &userID,
 		Action:   "WITHDRAWAL_COMPLETED",

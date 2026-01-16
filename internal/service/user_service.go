@@ -7,6 +7,7 @@ import (
 	"github.com/darisadam/madabank-server/internal/domain/user"
 	"github.com/darisadam/madabank-server/internal/pkg/crypto"
 	"github.com/darisadam/madabank-server/internal/pkg/jwt"
+	"github.com/darisadam/madabank-server/internal/pkg/metrics"
 	"github.com/darisadam/madabank-server/internal/repository"
 	"github.com/google/uuid"
 )
@@ -81,24 +82,32 @@ func (s *userService) Login(req *user.LoginRequest) (*user.LoginResponse, error)
 	// Get user by email
 	u, err := s.userRepo.GetByEmail(req.Email)
 	if err != nil {
+		metrics.RecordAuthAttempt(false) // ADD THIS
 		return nil, fmt.Errorf("invalid email or password")
 	}
 
 	// Check if user is active
 	if !u.IsActive {
+		metrics.RecordAuthAttempt(false) // ADD THIS
 		return nil, fmt.Errorf("account is inactive")
 	}
 
 	// Verify password
 	if !crypto.CheckPassword(req.Password, u.PasswordHash) {
+		metrics.RecordAuthAttempt(false) // ADD THIS
 		return nil, fmt.Errorf("invalid email or password")
 	}
 
 	// Generate JWT token
 	token, expiresAt, err := s.jwtService.GenerateToken(u.ID, u.Email, "customer")
 	if err != nil {
+		metrics.RecordAuthAttempt(false) // ADD THIS
 		return nil, fmt.Errorf("failed to generate token: %w", err)
 	}
+
+	// Record successful auth
+	metrics.RecordAuthAttempt(true)    // ADD THIS
+	metrics.RecordAuthTokenGenerated() // ADD THIS
 
 	// Remove sensitive data
 	u.PasswordHash = ""
