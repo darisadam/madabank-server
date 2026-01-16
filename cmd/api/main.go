@@ -16,14 +16,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
-	"github.com/prometheus/client_golang/prometheus/promhttp" // ADD THIS
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 
 	"github.com/darisadam/madabank-server/internal/api/handlers"
 	"github.com/darisadam/madabank-server/internal/api/middleware"
 	"github.com/darisadam/madabank-server/internal/pkg/jwt"
 	"github.com/darisadam/madabank-server/internal/pkg/logger"
-	"github.com/darisadam/madabank-server/internal/pkg/metrics" // ADD THIS
+	"github.com/darisadam/madabank-server/internal/pkg/metrics"
 	"github.com/darisadam/madabank-server/internal/repository"
 	"github.com/darisadam/madabank-server/internal/service"
 )
@@ -49,7 +49,7 @@ func main() {
 	defer logger.Sync()
 
 	// Set system info metrics
-	metrics.SetSystemInfo(Version, CommitSHA, runtime.Version()) // ADD THIS
+	metrics.SetSystemInfo(Version, CommitSHA, runtime.Version())
 
 	// Connect to database
 	db, err := initDB()
@@ -104,11 +104,11 @@ func main() {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(middleware.LoggerMiddleware())
-	router.Use(middleware.MetricsMiddleware()) // ADD THIS
+	router.Use(middleware.MetricsMiddleware())
 	router.Use(middleware.CORSMiddleware())
 
 	// Metrics endpoint (Prometheus scraping)
-	router.GET("/metrics", gin.WrapH(promhttp.Handler())) // ADD THIS
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	// Health check endpoints
 	router.GET("/health", func(c *gin.Context) {

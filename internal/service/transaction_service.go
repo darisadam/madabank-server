@@ -40,24 +40,24 @@ func NewTransactionService(
 }
 
 func (s *transactionService) Transfer(userID uuid.UUID, req *transaction.TransferRequest) (*transaction.Transaction, error) {
-	start := time.Now() // ADD THIS
+	start := time.Now()
 
 	// Parse UUIDs
 	fromAccountID, err := uuid.Parse(req.FromAccountID)
 	if err != nil {
-		metrics.RecordTransactionError("transfer", "invalid_from_account") // ADD THIS
+		metrics.RecordTransactionError("transfer", "invalid_from_account")
 		return nil, fmt.Errorf("invalid from_account_id")
 	}
 
 	toAccountID, err := uuid.Parse(req.ToAccountID)
 	if err != nil {
-		metrics.RecordTransactionError("transfer", "invalid_to_account") // ADD THIS
+		metrics.RecordTransactionError("transfer", "invalid_to_account")
 		return nil, fmt.Errorf("invalid to_account_id")
 	}
 
 	// Validate accounts are different
 	if fromAccountID == toAccountID {
-		metrics.RecordTransactionError("transfer", "same_account") // ADD THIS
+		metrics.RecordTransactionError("transfer", "same_account")
 		return nil, fmt.Errorf("cannot transfer to the same account")
 	}
 
@@ -65,32 +65,32 @@ func (s *transactionService) Transfer(userID uuid.UUID, req *transaction.Transfe
 	existing, err := s.transactionRepo.GetByIdempotencyKey(req.IdempotencyKey)
 	if err == nil {
 		// Transaction already exists - record as successful (idempotency worked)
-		duration := time.Since(start).Seconds()                                         // ADD THIS
-		metrics.RecordTransaction("transfer", "completed", req.Amount, "USD", duration) // ADD THIS
+		duration := time.Since(start).Seconds()
+		metrics.RecordTransaction("transfer", "completed", req.Amount, "USD", duration)
 		return existing, nil
 	}
 
 	// Verify source account ownership
 	fromAccount, err := s.accountRepo.GetByID(fromAccountID)
 	if err != nil {
-		metrics.RecordTransactionError("transfer", "source_not_found") // ADD THIS
+		metrics.RecordTransactionError("transfer", "source_not_found")
 		return nil, fmt.Errorf("source account not found")
 	}
 	if fromAccount.UserID != userID {
-		metrics.RecordTransactionError("transfer", "unauthorized") // ADD THIS
+		metrics.RecordTransactionError("transfer", "unauthorized")
 		return nil, fmt.Errorf("unauthorized: source account does not belong to user")
 	}
 
 	// Verify destination account exists and is active
 	toAccount, err := s.accountRepo.GetByID(toAccountID)
 	if err != nil {
-		metrics.RecordTransactionError("transfer", "destination_not_found") // ADD THIS
+		metrics.RecordTransactionError("transfer", "destination_not_found")
 		return nil, fmt.Errorf("destination account not found")
 	}
 
 	// Validate currency match
 	if fromAccount.Currency != toAccount.Currency {
-		metrics.RecordTransactionError("transfer", "currency_mismatch") // ADD THIS
+		metrics.RecordTransactionError("transfer", "currency_mismatch")
 		return nil, fmt.Errorf("currency mismatch: source account is %s, destination is %s", fromAccount.Currency, toAccount.Currency)
 	}
 
@@ -114,9 +114,9 @@ func (s *transactionService) Transfer(userID uuid.UUID, req *transaction.Transfe
 	err = s.transactionRepo.ExecuteTransfer(fromAccountID, toAccountID, req.Amount, txn)
 	if err != nil {
 		// Record failed transaction
-		duration := time.Since(start).Seconds()                                                     // ADD THIS
-		metrics.RecordTransaction("transfer", "failed", req.Amount, fromAccount.Currency, duration) // ADD THIS
-		metrics.RecordTransactionError("transfer", "execution_failed")                              // ADD THIS
+		duration := time.Since(start).Seconds()
+		metrics.RecordTransaction("transfer", "failed", req.Amount, fromAccount.Currency, duration)
+		metrics.RecordTransactionError("transfer", "execution_failed")
 
 		// Log failed transaction attempt
 		if errAudit := s.auditRepo.Create(&audit.AuditLog{
@@ -138,8 +138,8 @@ func (s *transactionService) Transfer(userID uuid.UUID, req *transaction.Transfe
 	}
 
 	// Record successful transaction
-	duration := time.Since(start).Seconds()                                                        // ADD THIS
-	metrics.RecordTransaction("transfer", "completed", req.Amount, fromAccount.Currency, duration) // ADD THIS
+	duration := time.Since(start).Seconds()
+	metrics.RecordTransaction("transfer", "completed", req.Amount, fromAccount.Currency, duration)
 
 	// Log successful transaction
 	if err := s.auditRepo.Create(&audit.AuditLog{

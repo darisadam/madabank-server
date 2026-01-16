@@ -82,32 +82,32 @@ func (s *userService) Login(req *user.LoginRequest) (*user.LoginResponse, error)
 	// Get user by email
 	u, err := s.userRepo.GetByEmail(req.Email)
 	if err != nil {
-		metrics.RecordAuthAttempt(false) // ADD THIS
+		metrics.RecordAuthAttempt(false)
 		return nil, fmt.Errorf("invalid email or password")
 	}
 
 	// Check if user is active
 	if !u.IsActive {
-		metrics.RecordAuthAttempt(false) // ADD THIS
+		metrics.RecordAuthAttempt(false)
 		return nil, fmt.Errorf("account is inactive")
 	}
 
 	// Verify password
 	if !crypto.CheckPassword(req.Password, u.PasswordHash) {
-		metrics.RecordAuthAttempt(false) // ADD THIS
+		metrics.RecordAuthAttempt(false)
 		return nil, fmt.Errorf("invalid email or password")
 	}
 
 	// Generate JWT token
 	token, expiresAt, err := s.jwtService.GenerateToken(u.ID, u.Email, "customer")
 	if err != nil {
-		metrics.RecordAuthAttempt(false) // ADD THIS
+		metrics.RecordAuthAttempt(false)
 		return nil, fmt.Errorf("failed to generate token: %w", err)
 	}
 
 	// Record successful auth
-	metrics.RecordAuthAttempt(true)    // ADD THIS
-	metrics.RecordAuthTokenGenerated() // ADD THIS
+	metrics.RecordAuthAttempt(true)
+	metrics.RecordAuthTokenGenerated()
 
 	// Remove sensitive data
 	u.PasswordHash = ""
