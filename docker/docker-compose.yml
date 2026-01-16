@@ -13,7 +13,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-EXEC", "pg_isready -U madabank"]
+      test: ["CMD", "pg_isready", "-U", "madabank"]
       interval: 10s
       timeout: 5s
       retries: 5
