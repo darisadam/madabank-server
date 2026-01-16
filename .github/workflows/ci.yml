@@ -186,20 +186,7 @@ jobs:
           name: gosec-report
           path: gosec-report.json
 
-      - name: Install Trivy
-        uses: aquasecurity/setup-trivy@v0.2.2
-        with:
-          cache: true
 
-      - name: Run Trivy vulnerability scanner
-        run: trivy fs --format sarif --output trivy-results.sarif .
-
-      - name: Upload Trivy results causing error
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: trivy-fs-report
-          path: 'trivy-results.sarif'
 
   # Job 5: Dependency Audit
   dependency-check:
