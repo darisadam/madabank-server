@@ -13,16 +13,17 @@ import (
 	"syscall"
 	"time"
 
-	"go.uber.org/zap"
-
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"github.com/prometheus/client_golang/prometheus/promhttp" // ADD THIS
+	"go.uber.org/zap"
 
 	"github.com/darisadam/madabank-server/internal/api/handlers"
 	"github.com/darisadam/madabank-server/internal/api/middleware"
 	"github.com/darisadam/madabank-server/internal/pkg/jwt"
 	"github.com/darisadam/madabank-server/internal/pkg/logger"
+	"github.com/darisadam/madabank-server/internal/pkg/metrics" // ADD THIS
 	"github.com/darisadam/madabank-server/internal/repository"
 	"github.com/darisadam/madabank-server/internal/service"
 )
@@ -47,16 +48,15 @@ func main() {
 	logger.Init(env)
 	defer logger.Sync()
 
+	// Set system info metrics
+	metrics.SetSystemInfo(Version, CommitSHA, runtime.Version()) // ADD THIS
+
 	// Connect to database
 	db, err := initDB()
 	if err != nil {
 		logger.Fatal("Failed to connect to database", zap.Error(err))
 	}
-	defer func() {
-		if err := db.Close(); err != nil {
-			logger.Error("Failed to close database", zap.Error(err))
-		}
-	}()
+	defer db.Close()
 
 	logger.Info("Connected to database successfully")
 
@@ -97,16 +97,11 @@ func main() {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(middleware.LoggerMiddleware())
+	router.Use(middleware.MetricsMiddleware()) // ADD THIS
 	router.Use(middleware.CORSMiddleware())
 
-	router.GET("/version", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"service":    "MadaBank API",
-			"version":    Version,
-			"commit_sha": CommitSHA,
-			"go_version": runtime.Version(),
-		})
-	})
+	// Metrics endpoint (Prometheus scraping)
+	router.GET("/metrics", gin.WrapH(promhttp.Handler())) // ADD THIS
 
 	// Health check endpoints
 	router.GET("/health", func(c *gin.Context) {
@@ -131,11 +126,21 @@ func main() {
 		})
 	})
 
+	// Version endpoint
+	router.GET("/version", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"service":    "MadaBank API",
+			"version":    Version,
+			"commit_sha": CommitSHA,
+			"go_version": runtime.Version(),
+		})
+	})
+
 	// API version endpoint
 	router.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"service": "MadaBank API",
-			"version": "0.1.0",
+			"version": Version,
 			"status":  "operational",
 		})
 	})
@@ -159,7 +164,6 @@ func main() {
 			users.DELETE("/profile", userHandler.DeleteAccount)
 		}
 
-		// Account routes (require authentication)
 		accounts := v1.Group("/accounts")
 		accounts.Use(middleware.AuthMiddleware(jwtService))
 		{
@@ -171,7 +175,6 @@ func main() {
 			accounts.DELETE("/:id", accountHandler.CloseAccount)
 		}
 
-		// Transaction routes (require authentication)
 		transactions := v1.Group("/transactions")
 		transactions.Use(middleware.AuthMiddleware(jwtService))
 		{
@@ -220,6 +223,31 @@ func main() {
 	}
 
 	logger.Info("Server exited gracefully")
+}
+
+// collectSystemMetrics periodically collects system and business metrics
+func collectSystemMetrics(db *sql.DB) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		// Database connection pool metrics
+		stats := db.Stats()
+		metrics.DBConnectionsActive.Set(float64(stats.OpenConnections))
+
+		// Collect user metrics
+		var totalUsers, activeUsers int
+		db.QueryRow("SELECT COUNT(*) FROM users WHERE deleted_at IS NULL").Scan(&totalUsers)
+		db.QueryRow("SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND is_active = true").Scan(&activeUsers)
+		metrics.UpdateUserMetrics(totalUsers, activeUsers)
+
+		// Collect account metrics
+		var checkingCount, savingsCount int
+		db.QueryRow("SELECT COUNT(*) FROM accounts WHERE account_type = 'checking' AND status = 'active'").Scan(&checkingCount)
+		db.QueryRow("SELECT COUNT(*) FROM accounts WHERE account_type = 'savings' AND status = 'active'").Scan(&savingsCount)
+		metrics.UpdateAccountMetrics("checking", checkingCount)
+		metrics.UpdateAccountMetrics("savings", savingsCount)
+	}
 }
 
 func initDB() (*sql.DB, error) {
