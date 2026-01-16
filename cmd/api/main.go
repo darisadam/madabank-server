@@ -68,14 +68,18 @@ func main() {
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
 	accountRepo := repository.NewAccountRepository(db)
+	transactionRepo := repository.NewTransactionRepository(db)
+	auditRepo := repository.NewAuditRepository(db)
 
 	// Initialize services
 	userService := service.NewUserService(userRepo, jwtService)
 	accountService := service.NewAccountService(accountRepo)
+	transactionService := service.NewTransactionService(transactionRepo, accountRepo, auditRepo)
 
 	// Initialize handlers
 	userHandler := handlers.NewUserHandler(userService)
 	accountHandler := handlers.NewAccountHandler(accountService)
+	transactionHandler := handlers.NewTransactionHandler(transactionService)
 
 	// Set Gin mode
 	if env == "production" {
@@ -149,6 +153,17 @@ func main() {
 			accounts.GET("/:id/balance", accountHandler.GetBalance)
 			accounts.PATCH("/:id", accountHandler.UpdateAccount)
 			accounts.DELETE("/:id", accountHandler.CloseAccount)
+		}
+
+		// Transaction routes (require authentication)
+		transactions := v1.Group("/transactions")
+		transactions.Use(middleware.AuthMiddleware(jwtService))
+		{
+			transactions.POST("/transfer", transactionHandler.Transfer)
+			transactions.POST("/deposit", transactionHandler.Deposit)
+			transactions.POST("/withdraw", transactionHandler.Withdraw)
+			transactions.GET("/history", transactionHandler.GetHistory)
+			transactions.GET("/:id", transactionHandler.GetTransaction)
 		}
 	}
 

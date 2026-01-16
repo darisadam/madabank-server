@@ -175,6 +175,132 @@ else
 fi
 
 echo ""
+
+# Test 9: Deposit Money
+echo "Test 9: Deposit Money to Checking Account"
+IDEMPOTENCY_KEY=$(uuidgen)
+PAYLOAD="{
+    \"account_id\": \"$CHECKING_ID\",
+    \"amount\": 1000.00,
+    \"description\": \"Initial deposit\",
+    \"idempotency_key\": \"$IDEMPOTENCY_KEY\"
+}"
+# echo "Sending Payload: $PAYLOAD"
+
+DEPOSIT_RESPONSE=$(make_request "POST" "/transactions/deposit" "$PAYLOAD" "$TOKEN")
+check_status "$DEPOSIT_RESPONSE" "201" "Deposit"
+
+echo ""
+
+# Test 10: Check Balance After Deposit
+echo "Test 10: Check Balance After Deposit"
+BALANCE_RESPONSE=$(curl -s -X GET "$BASE_URL/accounts/$CHECKING_ID/balance" \
+  -H "Authorization: Bearer $TOKEN")
+
+BALANCE=$(echo "$BALANCE_RESPONSE" | jq -r '.balance')
+echo "Balance: $BALANCE USD"
+
+if [ "$BALANCE" == "1000" ]; then
+    echo -e "${GREEN}✓ Balance updated correctly${NC}"
+else
+    echo -e "${RED}✗ Balance mismatch${NC}"
+fi
+
+echo ""
+
+# Test 11: Transfer Money Between Accounts
+echo "Test 11: Transfer Money (Checking → Savings)"
+TRANSFER_RESPONSE=$(curl -s -X POST "$BASE_URL/transactions/transfer" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d "{
+    \"from_account_id\": \"$CHECKING_ID\",
+    \"to_account_id\": \"$SAVINGS_ID\",
+    \"amount\": 250.00,
+    \"description\": \"Transfer to savings\",
+    \"idempotency_key\": \"$(uuidgen)\"
+  }")
+
+echo "$TRANSFER_RESPONSE" | jq .
+if [ "$(echo "$TRANSFER_RESPONSE" | jq -r '.status')" == "completed" ]; then
+    echo -e "${GREEN}✓ Transfer successful${NC}"
+else
+    echo -e "${RED}✗ Transfer failed${NC}"
+fi
+
+echo ""
+
+# Test 12: Verify Balances After Transfer
+echo "Test 12: Verify Balances After Transfer"
+CHECKING_BALANCE=$(curl -s -X GET "$BASE_URL/accounts/$CHECKING_ID/balance" -H "Authorization: Bearer $TOKEN" | jq -r '.balance')
+SAVINGS_BALANCE=$(curl -s -X GET "$BASE_URL/accounts/$SAVINGS_ID/balance" -H "Authorization: Bearer $TOKEN" | jq -r '.balance')
+
+echo "Checking balance: $CHECKING_BALANCE USD (expected: 750)"
+echo "Savings balance: $SAVINGS_BALANCE USD (expected: 250)"
+
+if [ "$CHECKING_BALANCE" == "750" ] && [ "$SAVINGS_BALANCE" == "250" ]; then
+    echo -e "${GREEN}✓ Balances correct after transfer${NC}"
+else
+    echo -e "${RED}✗ Balance mismatch after transfer${NC}"
+fi
+
+echo ""
+
+# Test 13: Get Transaction History
+echo "Test 13: Get Transaction History"
+HISTORY_RESPONSE=$(curl -s -X GET "$BASE_URL/transactions/history?account_id=$CHECKING_ID&limit=10" \
+  -H "Authorization: Bearer $TOKEN")
+
+echo "$HISTORY_RESPONSE" | jq .
+TXN_COUNT=$(echo "$HISTORY_RESPONSE" | jq '.total')
+
+if [ "$TXN_COUNT" -ge 2 ]; then
+    echo -e "${GREEN}✓ Transaction history retrieved ($TXN_COUNT transactions)${NC}"
+else
+    echo -e "${RED}✗ Transaction history incomplete${NC}"
+fi
+
+echo ""
+
+# Test 14: Test Idempotency (Duplicate Transfer)
+echo "Test 14: Test Idempotency (Prevent Duplicate Transfer)"
+IDEMPOTENCY_KEY="test-idempotency-$(date +%s)"
+
+# First transfer
+curl -s -X POST "$BASE_URL/transactions/transfer" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d "{
+    \"from_account_id\": \"$CHECKING_ID\",
+    \"to_account_id\": \"$SAVINGS_ID\",
+    \"amount\": 50.00,
+    \"description\": \"Idempotency test\",
+    \"idempotency_key\": \"$IDEMPOTENCY_KEY\"
+  }" > /dev/null
+
+# Duplicate transfer with same idempotency key
+DUPLICATE_RESPONSE=$(curl -s -X POST "$BASE_URL/transactions/transfer" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d "{
+    \"from_account_id\": \"$CHECKING_ID\",
+    \"to_account_id\": \"$SAVINGS_ID\",
+    \"amount\": 50.00,
+    \"description\": \"Idempotency test duplicate\",
+    \"idempotency_key\": \"$IDEMPOTENCY_KEY\"
+  }")
+
+# Check that balance only changed once (should be 700, not 650)
+# Check that balance only changed once (should be 700, not 650)
+FINAL_BALANCE=$(curl -s -X GET "$BASE_URL/accounts/$CHECKING_ID/balance" -H "Authorization: Bearer $TOKEN" | jq -r '.balance')
+
+if [ "$FINAL_BALANCE" == "700" ]; then
+    echo -e "${GREEN}✓ Idempotency working - duplicate prevented (balance: $FINAL_BALANCE)${NC}"
+else
+    echo -e "${RED}✗ Idempotency failed - duplicate processed (balance: $FINAL_BALANCE)${NC}"
+fi
+
+echo ""
 echo "========================================="
 echo "All tests completed!"
 echo "========================================="
