@@ -1,9 +1,10 @@
 package repository
 
 import (
+	cryptorand "crypto/rand"
 	"database/sql"
 	"fmt"
-	"math/rand"
+	"math/big"
 
 	"github.com/darisadam/madabank-server/internal/domain/card"
 	"github.com/google/uuid"
@@ -194,7 +195,11 @@ func (r *cardRepository) GenerateCardNumber() (string, error) {
 		// Generate 15 random digits
 		cardNumber := "4"
 		for j := 0; j < 14; j++ {
-			cardNumber += fmt.Sprintf("%d", rand.Intn(10))
+			digit, err := cryptoRandInt(10)
+			if err != nil {
+				return "", fmt.Errorf("failed to generate random digit: %w", err)
+			}
+			cardNumber += fmt.Sprintf("%d", digit)
 		}
 
 		// Calculate Luhn check digit
@@ -239,5 +244,19 @@ func (r *cardRepository) calculateLuhnCheckDigit(cardNumber string) int {
 }
 
 func (r *cardRepository) GenerateCVV() string {
-	return fmt.Sprintf("%03d", rand.Intn(1000))
+	cvv, err := cryptoRandInt(1000)
+	if err != nil {
+		// Fallback should never happen with crypto/rand, but handle gracefully
+		return "000"
+	}
+	return fmt.Sprintf("%03d", cvv)
+}
+
+// cryptoRandInt returns a cryptographically secure random integer in [0, max)
+func cryptoRandInt(max int) (int, error) {
+	n, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(max)))
+	if err != nil {
+		return 0, err
+	}
+	return int(n.Int64()), nil
 }
