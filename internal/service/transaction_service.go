@@ -100,7 +100,7 @@ func (s *transactionService) Transfer(userID uuid.UUID, req *transaction.Transfe
 	err = s.transactionRepo.ExecuteTransfer(fromAccountID, toAccountID, req.Amount, txn)
 	if err != nil {
 		// Log failed transaction attempt
-		s.auditRepo.Create(&audit.AuditLog{
+		_ = s.auditRepo.Create(&audit.AuditLog{
 			EventID:  uuid.New(),
 			UserID:   &userID,
 			Action:   "TRANSFER_FAILED",
@@ -117,7 +117,7 @@ func (s *transactionService) Transfer(userID uuid.UUID, req *transaction.Transfe
 	}
 
 	// Log successful transaction
-	s.auditRepo.Create(&audit.AuditLog{
+	_ = s.auditRepo.Create(&audit.AuditLog{
 		EventID:  uuid.New(),
 		UserID:   &userID,
 		Action:   "TRANSFER_COMPLETED",
@@ -173,7 +173,7 @@ func (s *transactionService) Deposit(userID uuid.UUID, req *transaction.DepositR
 	// Execute deposit
 	err = s.transactionRepo.ExecuteDeposit(accountID, req.Amount, txn)
 	if err != nil {
-		s.auditRepo.Create(&audit.AuditLog{
+		_ = s.auditRepo.Create(&audit.AuditLog{
 			EventID:  uuid.New(),
 			UserID:   &userID,
 			Action:   "DEPOSIT_FAILED",
@@ -187,7 +187,7 @@ func (s *transactionService) Deposit(userID uuid.UUID, req *transaction.DepositR
 		return nil, err
 	}
 
-	s.auditRepo.Create(&audit.AuditLog{
+	_ = s.auditRepo.Create(&audit.AuditLog{
 		EventID:  uuid.New(),
 		UserID:   &userID,
 		Action:   "DEPOSIT_COMPLETED",
@@ -240,7 +240,7 @@ func (s *transactionService) Withdrawal(userID uuid.UUID, req *transaction.Withd
 	// Execute withdrawal
 	err = s.transactionRepo.ExecuteWithdrawal(accountID, req.Amount, txn)
 	if err != nil {
-		s.auditRepo.Create(&audit.AuditLog{
+		_ = s.auditRepo.Create(&audit.AuditLog{
 			EventID:  uuid.New(),
 			UserID:   &userID,
 			Action:   "WITHDRAWAL_FAILED",
@@ -254,7 +254,7 @@ func (s *transactionService) Withdrawal(userID uuid.UUID, req *transaction.Withd
 		return nil, err
 	}
 
-	s.auditRepo.Create(&audit.AuditLog{
+	_ = s.auditRepo.Create(&audit.AuditLog{
 		EventID:  uuid.New(),
 		UserID:   &userID,
 		Action:   "WITHDRAWAL_COMPLETED",

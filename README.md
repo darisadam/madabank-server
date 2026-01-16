@@ -1,5 +1,10 @@
-# madabank-server
-Mada Bank server app by Adam
+# MadaBank API
+
+[![CI Pipeline](https://github.com/darisadam/madabank-server/actions/workflows/ci.yml/badge.svg)](https://github.com/darisadam/madabank-server/actions/workflows/ci.yml)
+[![CD Pipeline](https://github.com/darisadam/madabank-server/actions/workflows/cd.yml/badge.svg)](https://github.com/darisadam/madabank-server/actions/workflows/cd.yml)
+[![codecov](https://codecov.io/gh/darisadam/madabank-server/branch/main/graph/badge.svg)](https://codecov.io/gh/darisadam/madabank-server)
+[![Go Report Card](https://goreportcard.com/badge/github.com/darisadam/madabank-server)](https://goreportcard.com/report/github.com/darisadam/madabank-server)
+
 > Production-grade banking monolith demonstrating DevOps excellence
 
 ## 🎯 Project Goals
@@ -13,21 +18,58 @@ This project demonstrates enterprise-level backend and DevOps practices:
 - ✅ Kubernetes-ready architecture
 - ✅ ISO 27001 & CMMI compliance concepts
 
-## 🏗️ Architecture
-
-[Architecture diagram coming soon]
-
 ## 🚀 Quick Start
 ```bash
 # Clone repository
 git clone https://github.com/darisadam/madabank-server.git
+cd madabank-server
 
 # Run with Docker Compose
 make docker-up
 
 # Run tests
 make test
+
+# View coverage
+make test-coverage
 ```
+
+## 📊 CI/CD Pipeline
+
+Our automated pipeline includes:
+- **Linting & Code Quality**: golangci-lint, gofmt, go vet
+- **Testing**: Unit tests with 70%+ coverage
+- **Security Scanning**: Gosec, Trivy, Nancy
+- **Docker Build**: Multi-stage optimized builds
+- **Automated Deployment**: ECS Fargate (staging/production)
+
+### Running CI Checks Locally
+```bash
+# Lint code
+make lint
+
+# Run all tests
+make test
+
+# Security scan
+make security-scan
+
+# Build Docker image
+make docker-build
+```
+
+## 🛡️ Security
+
+Security is a top priority:
+- All passwords hashed with bcrypt
+- JWT authentication with RS256
+- Encryption at rest (AES-256-GCM)
+- TLS/HTTPS enforced
+- SQL injection protection
+- Rate limiting
+- Audit logging for all operations
+
+See [SECURITY.md](docs/SECURITY.md) for details.
 
 ## 📚 Documentation
 
@@ -35,14 +77,80 @@ make test
 - [Architecture Overview](docs/ARCHITECTURE.md)
 - [Security Model](docs/SECURITY.md)
 - [Deployment Guide](docs/DEPLOYMENT.md)
+- [Contributing Guidelines](CONTRIBUTING.md)
 
 ## 🛠️ Tech Stack
 
-- **Backend:** Go 1.21+, Gin Framework
-- **Database:** PostgreSQL 15, Redis
-- **Infrastructure:** AWS ECS Fargate, RDS, Secrets Manager
-- **Observability:** Prometheus, Grafana, CloudWatch
-- **CI/CD:** GitHub Actions, Terraform
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| **Backend** | Go 1.21+ | High performance, type safety |
+| **Framework** | Gin | Fast HTTP routing |
+| **Database** | PostgreSQL 15 | ACID compliance |
+| **Cache** | Redis 7 | Session & rate limiting |
+| **Container** | Docker | Portability |
+| **Orchestration** | ECS Fargate | Cost-effective deployment |
+| **IaC** | Terraform | Infrastructure automation |
+| **CI/CD** | GitHub Actions | Automated pipelines |
+| **Monitoring** | Prometheus + Grafana | Observability |
+| **Security** | Gosec, Trivy | Vulnerability scanning |
+
+## 🧪 Testing
+```bash
+# Unit tests
+go test -v ./...
+
+# With coverage
+go test -v -race -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out
+
+# Integration tests
+go test -v ./tests/integration/...
+
+# Benchmark tests
+go test -bench=. -benchmem ./...
+```
+
+## 🚀 Deployment
+
+### Local Development
+```bash
+make docker-up
+```
+
+### Staging
+```bash
+# Automatic on push to main branch
+git push origin main
+```
+
+### Production
+```bash
+# Create and push tag
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
+```
+
+## 📈 Roadmap
+
+- [x] User authentication & authorization
+- [x] Account management
+- [x] Transaction system with ACID
+- [x] CI/CD pipeline
+- [ ] Card management with encryption
+- [ ] Interest calculation background job
+- [ ] AWS deployment with Terraform
+- [ ] Prometheus metrics & Grafana dashboards
+- [ ] Rate limiting & DDoS protection
+- [ ] iOS mobile app integration
+
+## 🤝 Contributing
+
+Contributions are welcome! Please read our [Contributing Guidelines](CONTRIBUTING.md).
+
+## 👤 Author
+
+**Daris Adam**
+- GitHub: [@darisadam](https://github.com/darisadam)
 
 ---
 

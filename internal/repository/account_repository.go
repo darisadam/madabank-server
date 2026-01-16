@@ -1,10 +1,10 @@
 package repository
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"fmt"
-	"math/rand"
-	"time"
+	"math/big"
 
 	"github.com/darisadam/madabank-server/internal/domain/account"
 	"github.com/google/uuid"
@@ -132,7 +132,9 @@ func (r *accountRepository) GetByUserID(userID uuid.UUID) ([]*account.Account, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to list accounts: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	accounts := []*account.Account{}
 	for rows.Next() {
@@ -242,16 +244,19 @@ func (r *accountRepository) GenerateAccountNumber() (string, error) {
 	// In production, you'd want more sophisticated logic
 
 	const maxAttempts = 10
-	rand.Seed(time.Now().UnixNano())
 
 	for i := 0; i < maxAttempts; i++ {
-		// Generate 12-digit account number
-		accountNumber := fmt.Sprintf("MDA%010d", rand.Int63n(10000000000))
+		// Generate 12-digit account number using crypto/rand
+		n, err := rand.Int(rand.Reader, big.NewInt(10000000000))
+		if err != nil {
+			return "", fmt.Errorf("failed to generate random number: %w", err)
+		}
+		accountNumber := fmt.Sprintf("MDA%010d", n.Int64())
 
 		// Check if it already exists
 		var exists bool
 		query := `SELECT EXISTS(SELECT 1 FROM accounts WHERE account_number = $1)`
-		err := r.db.QueryRow(query, accountNumber).Scan(&exists)
+		err = r.db.QueryRow(query, accountNumber).Scan(&exists)
 		if err != nil {
 			return "", fmt.Errorf("failed to check account number: %w", err)
 		}

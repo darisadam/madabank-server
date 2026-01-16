@@ -163,7 +163,9 @@ func (r *transactionRepository) GetByAccountID(accountID uuid.UUID, limit, offse
 	if err != nil {
 		return nil, fmt.Errorf("failed to get transactions: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	return r.scanTransactions(rows)
 }
@@ -204,7 +206,9 @@ func (r *transactionRepository) GetByAccountIDWithFilters(accountID uuid.UUID, f
 	if err != nil {
 		return nil, fmt.Errorf("failed to get transactions: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	return r.scanTransactions(rows)
 }
@@ -240,7 +244,9 @@ func (r *transactionRepository) ExecuteTransfer(fromAccountID, toAccountID uuid.
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer dbTx.Rollback() // Rollback if not committed
+	defer func() {
+		_ = dbTx.Rollback() // Rollback if not committed
+	}()
 
 	// Lock both accounts for update (prevents race conditions)
 	var fromBalance, toBalance float64
@@ -301,7 +307,9 @@ func (r *transactionRepository) ExecuteDeposit(accountID uuid.UUID, amount float
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer dbTx.Rollback()
+	defer func() {
+		_ = dbTx.Rollback()
+	}()
 
 	// Lock account
 	var status string
@@ -339,7 +347,9 @@ func (r *transactionRepository) ExecuteWithdrawal(accountID uuid.UUID, amount fl
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer dbTx.Rollback()
+	defer func() {
+		_ = dbTx.Rollback()
+	}()
 
 	// Lock account and check balance
 	var balance float64
