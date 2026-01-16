@@ -17,15 +17,20 @@ import (
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
 	"github.com/darisadam/madabank-server/internal/api/handlers"
 	"github.com/darisadam/madabank-server/internal/api/middleware"
+	"github.com/darisadam/madabank-server/internal/pkg/crypto"
 	"github.com/darisadam/madabank-server/internal/pkg/jwt"
 	"github.com/darisadam/madabank-server/internal/pkg/logger"
 	"github.com/darisadam/madabank-server/internal/pkg/metrics"
 	"github.com/darisadam/madabank-server/internal/repository"
 	"github.com/darisadam/madabank-server/internal/service"
+
+	"github.com/darisadam/madabank-server/internal/pkg/ddos"
+	"github.com/darisadam/madabank-server/internal/pkg/ratelimit"
 )
 
 var (
@@ -67,6 +72,27 @@ func main() {
 	// Start metrics collector goroutine
 	go collectSystemMetrics(db)
 
+	// Initialize Redis client
+	redisClient := initRedis()
+	defer redisClient.Close()
+
+	// Initialize rate limiter
+	rateLimiter := ratelimit.NewRateLimiter(redisClient)
+
+	// Initialize DDoS protection
+	ddosProtection := ddos.NewDDoSProtection(redisClient)
+	go ddosProtection.MonitorGlobalTraffic(context.Background())
+
+	// Initialize encryptor for card data
+	encryptionKey := os.Getenv("ENCRYPTION_KEY")
+	if encryptionKey == "" {
+		logger.Fatal("ENCRYPTION_KEY environment variable is required")
+	}
+	encryptor, err := crypto.NewEncryptor(encryptionKey)
+	if err != nil {
+		logger.Fatal("Failed to initialize encryptor", logger.Error(err.Error()))
+	}
+
 	// Initialize JWT service
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
@@ -84,16 +110,19 @@ func main() {
 	accountRepo := repository.NewAccountRepository(db)
 	transactionRepo := repository.NewTransactionRepository(db)
 	auditRepo := repository.NewAuditRepository(db)
+	cardRepo := repository.NewCardRepository(db)
 
 	// Initialize services
 	userService := service.NewUserService(userRepo, jwtService)
 	accountService := service.NewAccountService(accountRepo)
 	transactionService := service.NewTransactionService(transactionRepo, accountRepo, auditRepo)
+	cardService := service.NewCardService(cardRepo, accountRepo, userRepo, encryptor)
 
 	// Initialize handlers
 	userHandler := handlers.NewUserHandler(userService)
 	accountHandler := handlers.NewAccountHandler(accountService)
 	transactionHandler := handlers.NewTransactionHandler(transactionService)
+	cardHandler := handlers.NewCardHandler(cardService)
 
 	// Set Gin mode
 	if env == "production" {
@@ -106,6 +135,13 @@ func main() {
 	router.Use(middleware.LoggerMiddleware())
 	router.Use(middleware.MetricsMiddleware())
 	router.Use(middleware.CORSMiddleware())
+	// Security: Set trusted proxies. For now, trusting local network.
+	// In production, this should be the ALB/Load Balancer IP or CIDR.
+	if err := router.SetTrustedProxies(nil); err != nil {
+		logger.Error("Failed to set trusted proxies", zap.Error(err))
+	}
+	router.Use(middleware.RateLimitMiddleware(rateLimiter))
+	router.Use(middleware.SuspiciousActivityMiddleware(rateLimiter))
 
 	// Metrics endpoint (Prometheus scraping)
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
@@ -155,16 +191,17 @@ func main() {
 	// API routes
 	v1 := router.Group("/api/v1")
 	{
-		// Public routes (no authentication)
+		// Public routes
 		auth := v1.Group("/auth")
 		{
 			auth.POST("/register", userHandler.Register)
 			auth.POST("/login", userHandler.Login)
 		}
 
-		// Protected routes (require authentication)
+		// Protected routes
 		users := v1.Group("/users")
 		users.Use(middleware.AuthMiddleware(jwtService))
+		users.Use(middleware.UserRateLimitMiddleware(rateLimiter))
 		{
 			users.GET("/profile", userHandler.GetProfile)
 			users.PUT("/profile", userHandler.UpdateProfile)
@@ -173,6 +210,7 @@ func main() {
 
 		accounts := v1.Group("/accounts")
 		accounts.Use(middleware.AuthMiddleware(jwtService))
+		accounts.Use(middleware.UserRateLimitMiddleware(rateLimiter))
 		{
 			accounts.POST("", accountHandler.CreateAccount)
 			accounts.GET("", accountHandler.GetAccounts)
@@ -184,12 +222,26 @@ func main() {
 
 		transactions := v1.Group("/transactions")
 		transactions.Use(middleware.AuthMiddleware(jwtService))
+		transactions.Use(middleware.UserRateLimitMiddleware(rateLimiter))
 		{
 			transactions.POST("/transfer", transactionHandler.Transfer)
 			transactions.POST("/deposit", transactionHandler.Deposit)
 			transactions.POST("/withdraw", transactionHandler.Withdraw)
 			transactions.GET("/history", transactionHandler.GetHistory)
 			transactions.GET("/:id", transactionHandler.GetTransaction)
+		}
+
+		// CARD ROUTES
+		cards := v1.Group("/cards")
+		cards.Use(middleware.AuthMiddleware(jwtService))
+		cards.Use(middleware.UserRateLimitMiddleware(rateLimiter))
+		{
+			cards.POST("", cardHandler.CreateCard)
+			cards.GET("", cardHandler.GetCards)
+			cards.POST("/details", cardHandler.GetCardDetails)
+			cards.PATCH("/:id", cardHandler.UpdateCard)
+			cards.POST("/:id/block", cardHandler.BlockCard)
+			cards.DELETE("/:id", cardHandler.DeleteCard)
 		}
 	}
 
@@ -287,4 +339,26 @@ func initDB() (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+func initRedis() *redis.Client {
+	redisAddr := os.Getenv("REDIS_URL")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+
+	opts := &redis.Options{
+		Addr: redisAddr,
+	}
+
+	client := redis.NewClient(opts)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := client.Ping(ctx).Err(); err != nil {
+		logger.Fatal("Failed to connect to Redis", zap.Error(err))
+	}
+
+	return client
 }
