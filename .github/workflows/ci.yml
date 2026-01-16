@@ -186,13 +186,13 @@ jobs:
           name: gosec-report
           path: gosec-report.json
 
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.29.0
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@v0.2.2
         with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
+          cache: true
+
+      - name: Run Trivy vulnerability scanner
+        run: trivy fs --format sarif --output trivy-results.sarif .
 
       - name: Upload Trivy results causing error
         uses: actions/upload-artifact@v4
@@ -243,12 +243,13 @@ jobs:
           cache-to: type=gha,mode=max
           load: true
 
-      - name: Scan Docker image with Trivy
-        uses: aquasecurity/trivy-action@0.29.0
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@v0.2.2
         with:
-          image-ref: madabank-api:${{ github.sha }}
-          format: 'sarif'
-          output: 'trivy-docker-results.sarif'
+          cache: true
+
+      - name: Scan Docker image with Trivy
+        run: trivy image --format sarif --output trivy-docker-results.sarif madabank-api:${{ github.sha }}
 
       - name: Upload Docker scan results
         uses: actions/upload-artifact@v4
