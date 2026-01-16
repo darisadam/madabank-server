@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"math/rand"
-	"time"
 
 	"github.com/darisadam/madabank-server/internal/domain/card"
 	"github.com/google/uuid"
@@ -190,8 +189,6 @@ func (r *cardRepository) GenerateCardNumber() (string, error) {
 	// Generate a valid 16-digit card number using Luhn algorithm
 	// Format: 4XXX XXXX XXXX XXXX (starts with 4 for Visa simulation)
 
-	rand.Seed(time.Now().UnixNano())
-
 	const maxAttempts = 10
 	for i := 0; i < maxAttempts; i++ {
 		// Generate 15 random digits
@@ -242,6 +239,5 @@ func (r *cardRepository) calculateLuhnCheckDigit(cardNumber string) int {
 }
 
 func (r *cardRepository) GenerateCVV() string {
-	rand.Seed(time.Now().UnixNano())
 	return fmt.Sprintf("%03d", rand.Intn(1000))
 }
