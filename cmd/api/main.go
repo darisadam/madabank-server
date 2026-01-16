@@ -67,12 +67,15 @@ func main() {
 
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
+	accountRepo := repository.NewAccountRepository(db)
 
 	// Initialize services
 	userService := service.NewUserService(userRepo, jwtService)
+	accountService := service.NewAccountService(accountRepo)
 
 	// Initialize handlers
 	userHandler := handlers.NewUserHandler(userService)
+	accountHandler := handlers.NewAccountHandler(accountService)
 
 	// Set Gin mode
 	if env == "production" {
@@ -134,6 +137,18 @@ func main() {
 			users.GET("/profile", userHandler.GetProfile)
 			users.PUT("/profile", userHandler.UpdateProfile)
 			users.DELETE("/profile", userHandler.DeleteAccount)
+		}
+
+		// Account routes (require authentication)
+		accounts := v1.Group("/accounts")
+		accounts.Use(middleware.AuthMiddleware(jwtService))
+		{
+			accounts.POST("", accountHandler.CreateAccount)
+			accounts.GET("", accountHandler.GetAccounts)
+			accounts.GET("/:id", accountHandler.GetAccount)
+			accounts.GET("/:id/balance", accountHandler.GetBalance)
+			accounts.PATCH("/:id", accountHandler.UpdateAccount)
+			accounts.DELETE("/:id", accountHandler.CloseAccount)
 		}
 	}
 
