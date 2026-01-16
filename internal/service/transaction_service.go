@@ -6,9 +6,11 @@ import (
 
 	"github.com/darisadam/madabank-server/internal/domain/audit"
 	"github.com/darisadam/madabank-server/internal/domain/transaction"
+	"github.com/darisadam/madabank-server/internal/pkg/logger"
 	"github.com/darisadam/madabank-server/internal/pkg/metrics"
 	"github.com/darisadam/madabank-server/internal/repository"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 type TransactionService interface {
@@ -117,7 +119,7 @@ func (s *transactionService) Transfer(userID uuid.UUID, req *transaction.Transfe
 		metrics.RecordTransactionError("transfer", "execution_failed")                              // ADD THIS
 
 		// Log failed transaction attempt
-		s.auditRepo.Create(&audit.AuditLog{
+		if errAudit := s.auditRepo.Create(&audit.AuditLog{
 			EventID:  uuid.New(),
 			UserID:   &userID,
 			Action:   "TRANSFER_FAILED",
@@ -129,7 +131,9 @@ func (s *transactionService) Transfer(userID uuid.UUID, req *transaction.Transfe
 				"from":   req.FromAccountID,
 				"to":     req.ToAccountID,
 			},
-		})
+		}); errAudit != nil {
+			logger.Error("Failed to create audit log for failed transfer", zap.Error(errAudit))
+		}
 		return nil, err
 	}
 
@@ -138,7 +142,7 @@ func (s *transactionService) Transfer(userID uuid.UUID, req *transaction.Transfe
 	metrics.RecordTransaction("transfer", "completed", req.Amount, fromAccount.Currency, duration) // ADD THIS
 
 	// Log successful transaction
-	s.auditRepo.Create(&audit.AuditLog{
+	if err := s.auditRepo.Create(&audit.AuditLog{
 		EventID:  uuid.New(),
 		UserID:   &userID,
 		Action:   "TRANSFER_COMPLETED",
@@ -149,7 +153,9 @@ func (s *transactionService) Transfer(userID uuid.UUID, req *transaction.Transfe
 			"from":   req.FromAccountID,
 			"to":     req.ToAccountID,
 		},
-	})
+	}); err != nil {
+		logger.Error("Failed to create audit log for completed transfer", zap.Error(err))
+	}
 
 	// Retrieve the completed transaction
 	return s.transactionRepo.GetByID(txn.ID)
@@ -205,7 +211,7 @@ func (s *transactionService) Deposit(userID uuid.UUID, req *transaction.DepositR
 		metrics.RecordTransaction("deposit", "failed", req.Amount, account.Currency, duration)
 		metrics.RecordTransactionError("deposit", "execution_failed")
 
-		s.auditRepo.Create(&audit.AuditLog{
+		if errAudit := s.auditRepo.Create(&audit.AuditLog{
 			EventID:  uuid.New(),
 			UserID:   &userID,
 			Action:   "DEPOSIT_FAILED",
@@ -215,14 +221,16 @@ func (s *transactionService) Deposit(userID uuid.UUID, req *transaction.DepositR
 				"error":  err.Error(),
 				"amount": req.Amount,
 			},
-		})
+		}); errAudit != nil {
+			logger.Error("Failed to create audit log for failed deposit", zap.Error(errAudit))
+		}
 		return nil, err
 	}
 
 	duration := time.Since(start).Seconds()
 	metrics.RecordTransaction("deposit", "completed", req.Amount, account.Currency, duration)
 
-	s.auditRepo.Create(&audit.AuditLog{
+	if err := s.auditRepo.Create(&audit.AuditLog{
 		EventID:  uuid.New(),
 		UserID:   &userID,
 		Action:   "DEPOSIT_COMPLETED",
@@ -231,7 +239,9 @@ func (s *transactionService) Deposit(userID uuid.UUID, req *transaction.DepositR
 		Metadata: map[string]interface{}{
 			"amount": req.Amount,
 		},
-	})
+	}); err != nil {
+		logger.Error("Failed to create audit log for completed deposit", zap.Error(err))
+	}
 
 	return s.transactionRepo.GetByID(txn.ID)
 }
@@ -286,7 +296,7 @@ func (s *transactionService) Withdrawal(userID uuid.UUID, req *transaction.Withd
 		metrics.RecordTransaction("withdrawal", "failed", req.Amount, account.Currency, duration)
 		metrics.RecordTransactionError("withdrawal", "execution_failed")
 
-		s.auditRepo.Create(&audit.AuditLog{
+		if errAudit := s.auditRepo.Create(&audit.AuditLog{
 			EventID:  uuid.New(),
 			UserID:   &userID,
 			Action:   "WITHDRAWAL_FAILED",
@@ -296,14 +306,16 @@ func (s *transactionService) Withdrawal(userID uuid.UUID, req *transaction.Withd
 				"error":  err.Error(),
 				"amount": req.Amount,
 			},
-		})
+		}); errAudit != nil {
+			logger.Error("Failed to create audit log for failed withdrawal", zap.Error(errAudit))
+		}
 		return nil, err
 	}
 
 	duration := time.Since(start).Seconds()
 	metrics.RecordTransaction("withdrawal", "completed", req.Amount, account.Currency, duration)
 
-	s.auditRepo.Create(&audit.AuditLog{
+	if err := s.auditRepo.Create(&audit.AuditLog{
 		EventID:  uuid.New(),
 		UserID:   &userID,
 		Action:   "WITHDRAWAL_COMPLETED",
@@ -312,7 +324,9 @@ func (s *transactionService) Withdrawal(userID uuid.UUID, req *transaction.Withd
 		Metadata: map[string]interface{}{
 			"amount": req.Amount,
 		},
-	})
+	}); err != nil {
+		logger.Error("Failed to create audit log for completed withdrawal", zap.Error(err))
+	}
 
 	return s.transactionRepo.GetByID(txn.ID)
 }
