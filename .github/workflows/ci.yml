@@ -48,7 +48,7 @@ jobs:
 
       - name: Install golangci-lint
         run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.55.2
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.64.5
 
       - name: Run golangci-lint
         run: golangci-lint run ./... --timeout=5m
@@ -194,11 +194,12 @@ jobs:
           format: 'sarif'
           output: 'trivy-results.sarif'
 
-      - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4
+      - name: Upload Trivy results causing error
+        uses: actions/upload-artifact@v4
         if: always()
         with:
-          sarif_file: 'trivy-results.sarif'
+          name: trivy-fs-report
+          path: 'trivy-results.sarif'
 
   # Job 5: Dependency Audit
   dependency-check:
@@ -249,10 +250,11 @@ jobs:
           output: 'trivy-docker-results.sarif'
 
       - name: Upload Docker scan results
-        uses: github/codeql-action/upload-sarif@v4
+        uses: actions/upload-artifact@v4
         if: always()
         with:
-          sarif_file: 'trivy-docker-results.sarif'
+          name: trivy-docker-report
+          path: 'trivy-docker-results.sarif'
 
   # Job 7: All checks passed
   ci-success:
