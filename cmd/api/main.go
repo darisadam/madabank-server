@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"syscall"
 	"time"
@@ -24,6 +25,12 @@ import (
 	"github.com/darisadam/madabank-server/internal/pkg/logger"
 	"github.com/darisadam/madabank-server/internal/repository"
 	"github.com/darisadam/madabank-server/internal/service"
+)
+
+var (
+	// Version info (injected at build time)
+	Version   = "dev"
+	CommitSHA = "unknown"
 )
 
 func main() {
@@ -91,6 +98,15 @@ func main() {
 	router.Use(gin.Recovery())
 	router.Use(middleware.LoggerMiddleware())
 	router.Use(middleware.CORSMiddleware())
+
+	router.GET("/version", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"service":    "MadaBank API",
+			"version":    Version,
+			"commit_sha": CommitSHA,
+			"go_version": runtime.Version(),
+		})
+	})
 
 	// Health check endpoints
 	router.GET("/health", func(c *gin.Context) {

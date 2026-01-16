@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
+	jwtv5 "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
 
@@ -12,7 +12,7 @@ type Claims struct {
 	UserID uuid.UUID `json:"user_id"`
 	Email  string    `json:"email"`
 	Role   string    `json:"role"`
-	jwt.RegisteredClaims
+	jwtv5.RegisteredClaims
 }
 
 type JWTService struct {
@@ -35,14 +35,14 @@ func (s *JWTService) GenerateToken(userID uuid.UUID, email, role string) (string
 		UserID: userID,
 		Email:  email,
 		Role:   role,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expiresAt),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			NotBefore: jwt.NewNumericDate(time.Now()),
+		RegisteredClaims: jwtv5.RegisteredClaims{
+			ExpiresAt: jwtv5.NewNumericDate(expiresAt),
+			IssuedAt:  jwtv5.NewNumericDate(time.Now()),
+			NotBefore: jwtv5.NewNumericDate(time.Now()),
 		},
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	token := jwtv5.NewWithClaims(jwtv5.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString(s.secretKey)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("failed to sign token: %w", err)
@@ -53,8 +53,8 @@ func (s *JWTService) GenerateToken(userID uuid.UUID, email, role string) (string
 
 // ValidateToken validates and parses a JWT token
 func (s *JWTService) ValidateToken(tokenString string) (*Claims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+	token, err := jwtv5.ParseWithClaims(tokenString, &Claims{}, func(token *jwtv5.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwtv5.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return s.secretKey, nil
