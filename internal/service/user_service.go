@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/darisadam/madabank-server/internal/domain/user"
 	"github.com/darisadam/madabank-server/internal/pkg/crypto"
 	"github.com/darisadam/madabank-server/internal/pkg/jwt"
 	"github.com/darisadam/madabank-server/internal/repository"
+	"github.com/google/uuid"
 )
 
 type UserService interface {

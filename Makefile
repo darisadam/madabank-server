@@ -60,7 +60,16 @@ vet: ## Run go vet
 	go vet ./...
 
 security-scan: ## Run security scanner (gosec)
-	gosec -fmt=json -out=gosec-report.json ./...
+	@if ! command -v gosec &> /dev/null; then \
+		echo "gosec not found in PATH, checking $(go env GOPATH)/bin..."; \
+		if [ -x "$(go env GOPATH)/bin/gosec" ]; then \
+			export PATH=$$PATH:$$(go env GOPATH)/bin; \
+		else \
+			echo "Installing gosec..."; \
+			go install github.com/securego/gosec/v2/cmd/gosec@latest; \
+		fi \
+	fi
+	@export PATH=$$PATH:$$(go env GOPATH)/bin && gosec -fmt=json -out=gosec-report.json ./...
 
 clean: ## Clean build artifacts
 	rm -rf bin/ coverage.out coverage.html gosec-report.json
