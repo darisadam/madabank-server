@@ -77,7 +77,7 @@ jobs:
           name: codecov-umbrella
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-report
           path: coverage.html
@@ -169,7 +169,7 @@ jobs:
           args: '-fmt json -out gosec-report.json ./...'
 
       - name: Upload Gosec report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           name: gosec-report
@@ -229,7 +229,7 @@ jobs:
         run: trivy image --format sarif --output trivy-docker-results.sarif madabank-api:${{ github.sha }}
 
       - name: Upload Docker scan results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           name: trivy-docker-report
