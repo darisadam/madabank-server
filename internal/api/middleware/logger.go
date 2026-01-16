@@ -3,8 +3,8 @@ package middleware
 import (
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/darisadam/madabank-server/internal/pkg/logger"
+	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
@@ -17,7 +17,7 @@ func LoggerMiddleware() gin.HandlerFunc {
 		c.Next()
 
 		latency := time.Since(start)
-		
+
 		logger.Info("HTTP Request",
 			zap.String("method", c.Request.Method),
 			zap.String("path", path),

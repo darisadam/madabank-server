@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/darisadam/madabank-server/internal/pkg/jwt"
+	"github.com/gin-gonic/gin"
 )
 
 func AuthMiddleware(jwtService *jwt.JWTService) gin.HandlerFunc {

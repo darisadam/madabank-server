@@ -12,6 +12,6 @@ func CORSMiddleware() gin.HandlerFunc {
 	config.AllowHeaders = []string{"Origin", "Content-Type", "Authorization"}
 	config.ExposeHeaders = []string{"Content-Length"}
 	config.AllowCredentials = true
-	
+
 	return cors.New(config)
 }

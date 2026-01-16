@@ -16,8 +16,8 @@ type Claims struct {
 }
 
 type JWTService struct {
-	secretKey     []byte
-	expiryHours   int
+	secretKey   []byte
+	expiryHours int
 }
 
 func NewJWTService(secretKey string, expiryHours int) *JWTService {
