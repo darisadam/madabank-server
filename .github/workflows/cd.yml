@@ -72,7 +72,9 @@ jobs:
         run: |
           # Get the first tag from the list
           TAGS="${{ steps.meta.outputs.tags }}"
+          echo "Raw tags from meta: $TAGS"
           FIRST_TAG=$(echo "$TAGS" | head -n 1)
+          echo "Selected single tag: $FIRST_TAG"
           echo "tag=$FIRST_TAG" >> $GITHUB_OUTPUT
 
   # Job 2: Deploy to Dev (automatic on develop branch)
@@ -104,6 +106,10 @@ jobs:
           NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "${{ needs.build-and-push.outputs.image-tag }}" \
             '.containerDefinitions[0].image = $IMAGE | 
              del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+          
+          # Debug: Print the new task definition to verify JSON validity
+          echo "Debug: New Task Definition JSON:"
+          echo "$NEW_TASK_DEF"
           
           # Register new task definition
           NEW_TASK_ARN=$(echo $NEW_TASK_DEF | \
@@ -168,6 +174,10 @@ jobs:
             '.containerDefinitions[0].image = $IMAGE | 
              del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
           
+          # Debug
+          echo "Debug: New Task Definition JSON (Staging):"
+          echo "$NEW_TASK_DEF"
+          
           # Register new task definition
           NEW_TASK_ARN=$(echo $NEW_TASK_DEF | \
             aws ecs register-task-definition \
@@ -229,6 +239,10 @@ jobs:
           NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "${{ needs.build-and-push.outputs.image-tag }}" \
             '.containerDefinitions[0].image = $IMAGE | 
              del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+          
+          # Debug
+          echo "Debug: New Task Definition JSON (Prod Auto):"
+          echo "$NEW_TASK_DEF"
           
           # Register new task definition
           NEW_TASK_ARN=$(echo $NEW_TASK_DEF | \
@@ -296,6 +310,10 @@ jobs:
           NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "ghcr.io/${{ env.IMAGE_NAME }}:${{ github.ref_name }}" \
             '.containerDefinitions[0].image = $IMAGE | 
              del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+          
+          # Debug
+          echo "Debug: New Task Definition JSON (Prod Manual):"
+          echo "$NEW_TASK_DEF"
           
           NEW_TASK_ARN=$(echo $NEW_TASK_DEF | \
             aws ecs register-task-definition \
