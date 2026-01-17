@@ -118,7 +118,7 @@ variable "desired_count" {
 variable "certificate_arn" {
   description = "ACM certificate ARN for HTTPS"
   type        = string
-  default     = ""
+  default     = "arn:aws:acm:us-east-1:905418381000:certificate/51c33457-981b-4e16-bbf6-3ceda1df3fe7"
 }
 
 # Monitoring

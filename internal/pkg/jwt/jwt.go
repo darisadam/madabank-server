@@ -16,14 +16,16 @@ type Claims struct {
 }
 
 type JWTService struct {
-	secretKey   []byte
-	expiryHours int
+	secretKey         []byte
+	expiryHours       int
+	refreshExpiryDays int
 }
 
 func NewJWTService(secretKey string, expiryHours int) *JWTService {
 	return &JWTService{
-		secretKey:   []byte(secretKey),
-		expiryHours: expiryHours,
+		secretKey:         []byte(secretKey),
+		expiryHours:       expiryHours,
+		refreshExpiryDays: 30, // Default to 30 days
 	}
 }
 
@@ -49,6 +51,15 @@ func (s *JWTService) GenerateToken(userID uuid.UUID, email, role string) (string
 	}
 
 	return tokenString, expiresAt, nil
+}
+
+// GenerateRefreshToken creates a random refresh token
+// GenerateRefreshToken creates a random refresh token
+func (s *JWTService) GenerateRefreshToken() (string, time.Time, error) {
+	expiresAt := time.Now().Add(time.Hour * 24 * time.Duration(s.refreshExpiryDays))
+	// Generate a secure random string using UUIDs for simplicity (this serves as a high-entropy random string)
+	token := uuid.New().String() + uuid.New().String()
+	return token, expiresAt, nil
 }
 
 // ValidateToken validates and parses a JWT token

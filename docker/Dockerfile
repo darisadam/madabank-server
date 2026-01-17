@@ -23,6 +23,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags "-X main.Version=${VERSION} -X main.CommitSHA=${COMMIT_SHA} -s -w" \
     -o bin/api cmd/api/main.go
 
+# Build migration tool
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -a -installsuffix cgo \
+    -ldflags "-s -w" \
+    -o bin/migrate cmd/migrate/main.go
+
 # Runtime stage
 FROM alpine:latest
 
@@ -35,9 +41,14 @@ RUN addgroup -g 1000 madabank && \
 
 WORKDIR /home/madabank
 
-# Copy binary from builder
+# Copy binaries from builder
 COPY --from=builder /app/bin/api .
+COPY --from=builder /app/bin/migrate .
 COPY --from=builder /app/migrations ./migrations
+
+# Copy entrypoint script
+COPY scripts/entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
 
 # Set ownership
 RUN chown -R madabank:madabank /home/madabank
@@ -52,5 +63,6 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
-# Run application
+# Set entrypoint and default command
+ENTRYPOINT ["./entrypoint.sh"]
 CMD ["./api"]

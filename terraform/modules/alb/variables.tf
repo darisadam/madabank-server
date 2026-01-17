@@ -26,5 +26,5 @@ variable "alb_security_group_id" {
 variable "certificate_arn" {
   description = "ACM certificate ARN for HTTPS"
   type        = string
-  default     = ""
+  default     = "arn:aws:secretsmanager:us-east-1:905418381000:secret:madabank/ghcr-credentials-ZFwLD9"
 }

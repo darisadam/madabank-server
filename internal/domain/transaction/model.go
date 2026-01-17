@@ -85,3 +85,13 @@ type TransactionHistoryResponse struct {
 	Limit        int                   `json:"limit"`
 	Offset       int                   `json:"offset"`
 }
+
+type QRResolutionResponse struct {
+	AccountID uuid.UUID `json:"account_id"`
+	OwnerName string    `json:"owner_name"`
+	Currency  string    `json:"currency"`
+}
+
+type QRResolutionRequest struct {
+	QRCode string `json:"qr_code" binding:"required"`
+}

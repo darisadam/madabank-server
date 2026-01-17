@@ -104,3 +104,14 @@ variable "encryption_key_arn" {
   description = "Encryption key ARN"
   type        = string
 }
+
+variable "docker_creds_arn" {
+  description = "Docker credentials secret ARN"
+  type        = string
+}
+
+variable "cpu_architecture" {
+  description = "Task CPU architecture (X86_64 or ARM64)"
+  type        = string
+  default     = "ARM64"
+}

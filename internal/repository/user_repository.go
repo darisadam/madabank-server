@@ -16,6 +16,11 @@ type UserRepository interface {
 	Update(id uuid.UUID, updates map[string]interface{}) error
 	Delete(id uuid.UUID) error
 	List(limit, offset int) ([]*user.User, error)
+
+	// Refresh Token methods
+	SaveRefreshToken(userID uuid.UUID, tokenHash string, expiresAt time.Time) error
+	GetRefreshToken(tokenHash string) (uuid.UUID, time.Time, error)
+	RevokeRefreshToken(tokenHash string) error
 }
 
 type userRepository struct {
@@ -217,4 +222,38 @@ func (r *userRepository) List(limit, offset int) ([]*user.User, error) {
 	}
 
 	return users, nil
+}
+
+func (r *userRepository) SaveRefreshToken(userID uuid.UUID, tokenHash string, expiresAt time.Time) error {
+	query := `INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at) VALUES ($1, $2, $3, $4)`
+	_, err := r.db.Exec(query, uuid.New(), userID, tokenHash, expiresAt)
+	if err != nil {
+		return fmt.Errorf("failed to save refresh token: %w", err)
+	}
+	return nil
+}
+
+func (r *userRepository) GetRefreshToken(tokenHash string) (uuid.UUID, time.Time, error) {
+	var userID uuid.UUID
+	var expiresAt time.Time
+
+	query := `SELECT user_id, expires_at FROM refresh_tokens WHERE token_hash = $1 AND revoked = false`
+	err := r.db.QueryRow(query, tokenHash).Scan(&userID, &expiresAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return uuid.Nil, time.Time{}, fmt.Errorf("invalid or revoked token")
+		}
+		return uuid.Nil, time.Time{}, fmt.Errorf("failed to get refresh token: %w", err)
+	}
+
+	return userID, expiresAt, nil
+}
+
+func (r *userRepository) RevokeRefreshToken(tokenHash string) error {
+	query := `UPDATE refresh_tokens SET revoked = true WHERE token_hash = $1`
+	_, err := r.db.Exec(query, tokenHash)
+	if err != nil {
+		return fmt.Errorf("failed to revoke refresh token: %w", err)
+	}
+	return nil
 }

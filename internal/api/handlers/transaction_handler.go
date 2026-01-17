@@ -198,3 +198,37 @@ func (h *TransactionHandler) GetTransaction(c *gin.Context) {
 
 	c.JSON(http.StatusOK, txn)
 }
+
+// ResolveQR godoc
+// @Summary Resolve QR Code
+// @Description Resolve a QR code string to account details for confirmation
+// @Tags transactions
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body transaction.QRResolutionRequest true "QR Code"
+// @Success 200 {object} transaction.QRResolutionResponse
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Router /api/v1/transactions/qr/resolve [post]
+func (h *TransactionHandler) ResolveQR(c *gin.Context) {
+	_, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var req transaction.QRResolutionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	details, err := h.transactionService.ResolveQR(req.QRCode)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, details)
+}

@@ -27,6 +27,12 @@ resource "aws_ecs_task_definition" "main" {
   family                   = "${var.project_name}-${var.environment}"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = var.cpu_architecture
+  }
+
   cpu                      = var.container_cpu
   memory                   = var.container_memory
   execution_role_arn       = var.ecs_task_execution_role_arn
@@ -36,6 +42,10 @@ resource "aws_ecs_task_definition" "main" {
     {
       name  = "${var.project_name}-api"
       image = var.container_image
+      
+      repositoryCredentials = {
+        credentialsParameter = var.docker_creds_arn
+      }
       
       portMappings = [
         {
@@ -101,6 +111,29 @@ resource "aws_ecs_task_definition" "main" {
       }
 
       essential = true
+    },
+    {
+      name      = "xray-daemon"
+      image     = "amazon/aws-xray-daemon:latest"
+      cpu       = 32
+      memory    = 256
+      essential = false
+
+      portMappings = [
+        {
+          containerPort = 2000
+          protocol      = "udp"
+        }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = "/ecs/${var.project_name}-${var.environment}"
+          "awslogs-region"        = data.aws_region.current.name
+          "awslogs-stream-prefix" = "xray"
+        }
+      }
     }
   ])
 
@@ -133,14 +166,12 @@ resource "aws_ecs_service" "main" {
 
   health_check_grace_period_seconds = 60
 
-  deployment_configuration {
-    maximum_percent         = 200
-    minimum_healthy_percent = 100
-    
-    deployment_circuit_breaker {
-      enable   = true
-      rollback = true
-    }
+  deployment_maximum_percent         = 200
+  deployment_minimum_healthy_percent = 100
+  
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
   }
 
   enable_execute_command = true

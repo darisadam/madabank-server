@@ -94,3 +94,25 @@ resource "aws_iam_role_policy" "ecs_task" {
     ]
   })
 }
+
+# Custom policy for X-Ray permissions
+resource "aws_iam_role_policy" "xray" {
+  name_prefix = "${var.project_name}-${var.environment}-xray-"
+  role        = aws_iam_role.ecs_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "xray:PutTraceSegments",
+          "xray:PutTelemetryRecords",
+          "xray:GetSamplingRules",
+          "xray:GetSamplingTargets"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}

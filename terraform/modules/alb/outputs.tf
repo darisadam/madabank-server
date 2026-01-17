@@ -27,3 +27,8 @@ output "target_group_arn_suffix" {
   description = "Target group ARN suffix for CloudWatch metrics"
   value       = aws_lb_target_group.main.arn_suffix
 }
+
+output "https_listener_arn" {
+  description = "ALB HTTPS Listener ARN"
+  value       = try(aws_lb_listener.https[0].arn, "")
+}

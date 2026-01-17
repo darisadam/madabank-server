@@ -112,35 +112,51 @@ go test -bench=. -benchmem ./...
 
 ## 🚀 Deployment
 
-### Local Development
+This project uses a **Tuple Deployment Strategy** with fully isolated environments:
+
+| Environment | Branch | URL | Purpose |
+|-------------|--------|-----|---------|
+| **Development** | `develop` | `https://api-dev.madabank.art` | Frontend Integration Testing |
+| **Staging** | `staging` | `https://api-staging.madabank.art` | QA & Acceptance Testing |
+| **Production** | `main` | `https://api.madabank.art` | Live User Traffic |
+
+### 💰 Cost Management (New)
+To prevent AWS bill shock, we have implemented a "shutdown" mechanism for non-production hours.
+See [Cost Management Guide](docs/COST_MANAGEMENT.md).
+
+### Deployment Commands
+
+#### Staging (Manual Trigger via Git)
 ```bash
-make docker-up
+git checkout staging
+git merge develop
+git push origin staging
 ```
 
-### Staging
+#### Production (Automatic)
 ```bash
-# Automatic on push to main branch
+git checkout main
+git merge staging
 git push origin main
 ```
 
-### Production
+#### Production Release (Tagging)
 ```bash
-# Create and push tag
 git tag -a v1.0.0 -m "Release v1.0.0"
 git push origin v1.0.0
 ```
 
 ## 📈 Roadmap
 
-- [x] User authentication & authorization
+- [x] User authentication & authorization (JWT + Refresh Tokens)
 - [x] Account management
-- [x] Transaction system with ACID
-- [x] CI/CD pipeline
-- [ ] Card management with encryption
-- [ ] Interest calculation background job
-- [ ] AWS deployment with Terraform
-- [ ] Prometheus metrics & Grafana dashboards
-- [ ] Rate limiting & DDoS protection
+- [x] Transaction system with ACID compliance
+- [x] CI/CD pipeline (GitHub Actions -> AWS ECS)
+- [x] AWS Infrastructure (Terraform for Dev/Staging/Prod)
+- [x] Rate limiting & DDoS protection
+- [x] Maintenance Mode
+- [ ] Card management encryptions (In Progress)
+- [ ] Prometheus metrics & Grafana dashboards (Configured, needing refinement)
 - [ ] iOS mobile app integration
 
 ## 🤝 Contributing

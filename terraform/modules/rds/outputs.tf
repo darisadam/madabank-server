@@ -18,3 +18,8 @@ output "db_password_secret_arn" {
   description = "DB password secret ARN"
   value       = aws_secretsmanager_secret.db_password.arn
 }
+
+output "db_instance_id" {
+  description = "RDS Instance Identifier"
+  value       = aws_db_instance.main.id
+}

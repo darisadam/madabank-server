@@ -1,6 +1,6 @@
 # ElastiCache Subnet Group
 resource "aws_elasticache_subnet_group" "main" {
-  name_prefix = "${var.project_name}-${var.environment}-"
+  name        = "${var.project_name}-${var.environment}"
   subnet_ids  = var.private_subnet_ids
 
   tags = {
@@ -10,7 +10,7 @@ resource "aws_elasticache_subnet_group" "main" {
 
 # ElastiCache Parameter Group
 resource "aws_elasticache_parameter_group" "main" {
-  name_prefix = "${var.project_name}-${var.environment}-"
+  name        = "${var.project_name}-${var.environment}"
   family      = "redis7"
 
   parameter {
@@ -30,7 +30,7 @@ resource "aws_elasticache_parameter_group" "main" {
 # ElastiCache Replication Group (Redis)
 resource "aws_elasticache_replication_group" "main" {
   replication_group_id       = "${var.project_name}-${var.environment}"
-  replication_group_description = "Redis cluster for ${var.project_name} ${var.environment}"
+  description          = "Redis cluster for ${var.project_name} ${var.environment}"
   
   engine               = "redis"
   engine_version       = "7.0"

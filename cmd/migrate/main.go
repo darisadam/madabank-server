@@ -4,9 +4,12 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
+	"strings"
 
-	migrate "github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4"
+
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/joho/godotenv"
@@ -20,6 +23,12 @@ func main() {
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		log.Fatal("DATABASE_URL is not set")
+	}
+
+	// Inject password if present (from Secrets Manager)
+	dbPassword := os.Getenv("DB_PASSWORD")
+	if dbPassword != "" {
+		databaseURL = strings.Replace(databaseURL, "PLACEHOLDER", url.QueryEscape(dbPassword), 1)
 	}
 
 	// Open database connection

@@ -1,6 +1,6 @@
 terraform {
   backend "s3" {
-    bucket         = "madabank-terraform-state-prod"
+    bucket         = "madabank-terraform-state-dev"
     key            = "prod/terraform.tfstate"
     region         = "us-east-1"
     encrypt        = true
@@ -20,23 +20,31 @@ module "madabank" {
   public_subnet_cidrs  = ["10.2.1.0/24", "10.2.2.0/24", "10.2.3.0/24"]
   private_subnet_cidrs = ["10.2.11.0/24", "10.2.12.0/24", "10.2.13.0/24"]
 
-  # Database - production-grade with multi-AZ
-  db_instance_class       = "db.t3.medium"
-  db_allocated_storage    = 100
-  backup_retention_period = 30
-  db_multi_az            = true
+  # Database - cost-optimized for learning/dev-prod
+  db_instance_class       = "db.t3.micro"
+  db_allocated_storage    = 20
+  backup_retention_period = 7
+  db_multi_az            = false # Single AZ to save cost
 
-  # Redis - production with failover
-  redis_node_type      = "cache.t3.medium"
-  redis_num_cache_nodes = 2
+  # Redis - cost-optimized
+  redis_node_type      = "cache.t3.micro"
+  redis_num_cache_nodes = 1
 
-  # ECS - production resources with autoscaling
-  container_cpu    = 1024
-  container_memory = 2048
-  desired_count    = 3
+  # ECS - cost-optimized
+  container_cpu    = 256
+  container_memory = 512
+  desired_count    = 1
+  min_capacity     = 1
+  max_capacity     = 3
+
+  # Container image
+  container_image = "ghcr.io/darisadam/madabank-server:v1.0.0"
+
+  # SSL Certificate
+  certificate_arn = var.certificate_arn
 
   # Monitoring
-  alert_email = "alerts@madabank.com"
+  alert_email = "darisadam.dev@gmail.com"
 }
 
 output "alb_url" {

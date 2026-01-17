@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -113,9 +115,10 @@ func main() {
 	cardRepo := repository.NewCardRepository(db)
 
 	// Initialize services
+	securityService := service.NewSecurityService()
 	userService := service.NewUserService(userRepo, jwtService)
 	accountService := service.NewAccountService(accountRepo)
-	transactionService := service.NewTransactionService(transactionRepo, accountRepo, auditRepo)
+	transactionService := service.NewTransactionService(transactionRepo, accountRepo, auditRepo, userRepo)
 	cardService := service.NewCardService(cardRepo, accountRepo, userRepo, encryptor)
 
 	// Initialize handlers
@@ -123,6 +126,7 @@ func main() {
 	accountHandler := handlers.NewAccountHandler(accountService)
 	transactionHandler := handlers.NewTransactionHandler(transactionService)
 	cardHandler := handlers.NewCardHandler(cardService)
+	securityHandler := handlers.NewSecurityHandler(securityService)
 
 	// Set Gin mode
 	if env == "production" {
@@ -140,6 +144,7 @@ func main() {
 	if err := router.SetTrustedProxies(nil); err != nil {
 		logger.Error("Failed to set trusted proxies", zap.Error(err))
 	}
+	router.Use(middleware.MaintenanceMiddleware(redisClient))
 	router.Use(middleware.RateLimitMiddleware(rateLimiter))
 	router.Use(middleware.SuspiciousActivityMiddleware(rateLimiter))
 
@@ -191,11 +196,18 @@ func main() {
 	// API routes
 	v1 := router.Group("/api/v1")
 	{
+		// Security Routes (No Auth required for public key)
+		securityParams := v1.Group("/security")
+		{
+			securityParams.GET("/public-key", securityHandler.GetPublicKey)
+		}
+
 		// Public routes
 		auth := v1.Group("/auth")
 		{
 			auth.POST("/register", userHandler.Register)
 			auth.POST("/login", userHandler.Login)
+			auth.POST("/refresh", userHandler.RefreshToken)
 		}
 
 		// Protected routes
@@ -227,6 +239,7 @@ func main() {
 			transactions.POST("/transfer", transactionHandler.Transfer)
 			transactions.POST("/deposit", transactionHandler.Deposit)
 			transactions.POST("/withdraw", transactionHandler.Withdraw)
+			transactions.POST("/qr/resolve", transactionHandler.ResolveQR)
 			transactions.GET("/history", transactionHandler.GetHistory)
 			transactions.GET("/:id", transactionHandler.GetTransaction)
 		}
@@ -321,6 +334,12 @@ func initDB() (*sql.DB, error) {
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL environment variable is required")
+	}
+
+	// Inject password if present (from Secrets Manager)
+	dbPassword := os.Getenv("DB_PASSWORD")
+	if dbPassword != "" {
+		databaseURL = strings.Replace(databaseURL, "PLACEHOLDER", url.QueryEscape(dbPassword), 1)
 	}
 
 	db, err := sql.Open("postgres", databaseURL)

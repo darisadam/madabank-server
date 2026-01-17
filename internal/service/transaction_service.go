@@ -19,23 +19,27 @@ type TransactionService interface {
 	Withdrawal(userID uuid.UUID, req *transaction.WithdrawalRequest) (*transaction.Transaction, error)
 	GetTransactionHistory(userID uuid.UUID, req *transaction.TransactionHistoryRequest) (*transaction.TransactionHistoryResponse, error)
 	GetTransaction(userID uuid.UUID, transactionID uuid.UUID) (*transaction.Transaction, error)
+	ResolveQR(qrCode string) (*transaction.QRResolutionResponse, error)
 }
 
 type transactionService struct {
 	transactionRepo repository.TransactionRepository
 	accountRepo     repository.AccountRepository
 	auditRepo       repository.AuditRepository
+	userRepo        repository.UserRepository
 }
 
 func NewTransactionService(
 	transactionRepo repository.TransactionRepository,
 	accountRepo repository.AccountRepository,
 	auditRepo repository.AuditRepository,
+	userRepo repository.UserRepository,
 ) TransactionService {
 	return &transactionService{
 		transactionRepo: transactionRepo,
 		accountRepo:     accountRepo,
 		auditRepo:       auditRepo,
+		userRepo:        userRepo,
 	}
 }
 
@@ -436,4 +440,35 @@ func (s *transactionService) GetTransaction(userID uuid.UUID, transactionID uuid
 	}
 
 	return txn, nil
+}
+
+func (s *transactionService) ResolveQR(qrCode string) (*transaction.QRResolutionResponse, error) {
+	// Expected format: "madabank:account:<uuid>"
+	var accountIDStr string
+	_, err := fmt.Sscanf(qrCode, "madabank:account:%s", &accountIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid QR code format")
+	}
+
+	accountID, err := uuid.Parse(accountIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid account ID in QR code")
+	}
+
+	account, err := s.accountRepo.GetByID(accountID)
+	if err != nil {
+		return nil, fmt.Errorf("account not found")
+	}
+
+	ownerName := "Unknown User"
+	user, err := s.userRepo.GetByID(account.UserID)
+	if err == nil {
+		ownerName = fmt.Sprintf("%s %s", user.FirstName, user.LastName)
+	}
+
+	return &transaction.QRResolutionResponse{
+		AccountID: account.ID,
+		OwnerName: ownerName,
+		Currency:  account.Currency,
+	}, nil
 }

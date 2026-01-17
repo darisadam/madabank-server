@@ -147,6 +147,7 @@ module "ecs" {
   desired_count            = var.desired_count
   jwt_secret_arn           = aws_secretsmanager_secret.jwt_secret.arn
   encryption_key_arn       = aws_secretsmanager_secret.encryption_key.arn
+  docker_creds_arn         = aws_secretsmanager_secret.docker_registry_creds.arn
 }
 
 # Monitoring Module
@@ -160,6 +161,15 @@ module "monitoring" {
   alb_arn_suffix   = module.alb.alb_arn_suffix
   target_group_arn_suffix = module.alb.target_group_arn_suffix
   sns_email        = var.alert_email
+  
+  vpc_id                      = module.networking.vpc_id
+  private_subnet_ids          = module.networking.private_subnet_ids
+  alb_security_group_id       = module.security.alb_security_group_id
+  ecs_task_execution_role_arn = module.iam.ecs_task_execution_role_arn
+  ecs_task_role_arn           = module.iam.ecs_task_role_arn
+  ecs_cluster_id              = module.ecs.cluster_id
+  alb_https_listener_arn      = module.alb.https_listener_arn
+  rds_identifier              = module.rds.db_instance_id
 }
 
 # Secrets Manager for JWT Secret
@@ -245,6 +255,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "logs" {
     id     = "log-retention"
     status = "Enabled"
 
+    filter {
+      prefix = ""
+    }
+
     transition {
       days          = 90
       storage_class = "GLACIER"
@@ -263,4 +277,25 @@ resource "aws_s3_bucket_public_access_block" "logs" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+}
+
+# Secrets Manager for Docker Registry Credentials
+resource "aws_secretsmanager_secret" "docker_registry_creds" {
+  name_prefix             = "${var.project_name}-${var.environment}-docker-creds-"
+  recovery_window_in_days = 7
+
+  tags = merge(
+    local.common_tags,
+    {
+      Name = "${var.project_name}-${var.environment}-docker-creds"
+    }
+  )
+}
+
+resource "aws_secretsmanager_secret_version" "docker_registry_creds" {
+  secret_id     = aws_secretsmanager_secret.docker_registry_creds.id
+  secret_string = jsonencode({
+    username = "placeholder"
+    password = "placeholder"
+  })
 }
