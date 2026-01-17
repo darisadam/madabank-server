@@ -23,7 +23,7 @@ jobs:
       contents: read
       packages: write
     outputs:
-      image-tag: ${{ steps.meta.outputs.tags }}
+      image-tag: ${{ steps.export_tag.outputs.tag }}
       version: ${{ steps.meta.outputs.version }}
       
     steps:
@@ -66,6 +66,14 @@ jobs:
           build-args: |
             VERSION=${{ github.ref_name }}
             COMMIT_SHA=${{ github.sha }}
+
+      - name: Output single image tag
+        id: export_tag
+        run: |
+          # Get the first tag from the list
+          TAGS="${{ steps.meta.outputs.tags }}"
+          FIRST_TAG=$(echo "$TAGS" | head -n 1)
+          echo "tag=$FIRST_TAG" >> $GITHUB_OUTPUT
 
   # Job 2: Deploy to Dev (automatic on develop branch)
   deploy-dev:
