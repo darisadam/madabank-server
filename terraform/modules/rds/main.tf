@@ -66,6 +66,9 @@ resource "aws_db_instance" "main" {
   engine_version = "16.3"
   instance_class = var.db_instance_class
 
+  allow_major_version_upgrade = true
+  apply_immediately           = true
+
   allocated_storage     = var.db_allocated_storage
   max_allocated_storage = var.db_allocated_storage * 2
   storage_type          = "gp3"
