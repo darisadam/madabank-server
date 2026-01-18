@@ -1,0 +1,39 @@
+# Runtime stage only (No builder stage needed)
+FROM alpine:latest
+
+# Install runtime dependencies
+RUN apk --no-cache add ca-certificates tzdata curl
+
+# Create non-root user
+RUN addgroup -g 1000 madabank && \
+    adduser -D -u 1000 -G madabank madabank
+
+WORKDIR /home/madabank
+
+# Build arguments provided by buildx
+ARG TARGETOS
+ARG TARGETARCH
+
+# Copy specific binary based on target architecture
+# The pipeline must build binaries as bin/api-linux-amd64 and bin/api-linux-arm64
+COPY bin/api-${TARGETOS}-${TARGETARCH} ./api
+COPY bin/migrate-${TARGETOS}-${TARGETARCH} ./migrate
+COPY migrations ./migrations
+COPY scripts/entrypoint.sh ./entrypoint.sh
+
+RUN chmod +x ./entrypoint.sh ./api ./migrate && \
+    chown -R madabank:madabank /home/madabank
+
+# Switch to non-root user
+USER madabank
+
+# Expose port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8080/health || exit 1
+
+# Set entrypoint and default command
+ENTRYPOINT ["./entrypoint.sh"]
+CMD ["./api"]

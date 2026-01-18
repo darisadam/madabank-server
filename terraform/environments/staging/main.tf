@@ -13,6 +13,18 @@ variable "container_image" {
   type        = string
 }
 
+variable "docker_username" {
+  description = "CI/CD Docker username"
+  type        = string
+  sensitive   = true
+}
+
+variable "docker_password" {
+  description = "CI/CD Docker password"
+  type        = string
+  sensitive   = true
+}
+
 module "madabank" {
   source = "../../"
 
@@ -48,6 +60,10 @@ module "madabank" {
   # Container image
   # Container image
   container_image = var.container_image
+
+  # Docker Credentials
+  docker_username = var.docker_username
+  docker_password = var.docker_password
 }
 
 output "alb_url" {
