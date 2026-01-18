@@ -104,7 +104,7 @@ func (r *cardRepository) GetByAccountID(accountID uuid.UUID) ([]*card.Card, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to list cards: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	cards := []*card.Card{}
 	for rows.Next() {
