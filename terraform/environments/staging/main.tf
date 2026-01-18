@@ -8,6 +8,11 @@ terraform {
   }
 }
 
+variable "container_image" {
+  description = "Docker image tag to deploy"
+  type        = string
+}
+
 module "madabank" {
   source = "../../"
 
@@ -41,7 +46,8 @@ module "madabank" {
   alert_email = "darisadam.dev@gmail.com"
 
   # Container image
-  container_image = "ghcr.io/darisadam/madabank-server:latest"
+  # Container image
+  container_image = var.container_image
 }
 
 output "alb_url" {
