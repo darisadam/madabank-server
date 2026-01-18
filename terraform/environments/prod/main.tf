@@ -8,6 +8,23 @@ terraform {
   }
 }
 
+variable "container_image" {
+  description = "Docker image tag to deploy"
+  type        = string
+}
+
+variable "docker_username" {
+  description = "CI/CD Docker username"
+  type        = string
+  sensitive   = true
+}
+
+variable "docker_password" {
+  description = "CI/CD Docker password"
+  type        = string
+  sensitive   = true
+}
+
 module "madabank" {
   source = "../../"
 
@@ -38,7 +55,13 @@ module "madabank" {
   max_capacity     = 3
 
   # Container image
-  container_image = "ghcr.io/darisadam/madabank-server:v1.0.0"
+  # Container image
+  container_image = var.container_image
+
+  # Docker Credentials
+  docker_username = var.docker_username
+  docker_password = var.docker_password
+
 
   # SSL Certificate
   certificate_arn = var.certificate_arn
