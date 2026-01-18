@@ -55,16 +55,11 @@ module "madabank" {
   max_capacity     = 3
 
   # Container image
-  # Container image
   container_image = var.container_image
 
   # Docker Credentials
   docker_username = var.docker_username
   docker_password = var.docker_password
-
-
-  # SSL Certificate
-  certificate_arn = var.certificate_arn
 
   # Monitoring
   alert_email = "darisadam.dev@gmail.com"
