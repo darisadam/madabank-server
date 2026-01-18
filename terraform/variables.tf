@@ -39,6 +39,12 @@ variable "private_subnet_cidrs" {
   default     = ["10.0.11.0/24", "10.0.12.0/24"]
 }
 
+variable "single_nat_gateway" {
+  description = "Use a single NAT Gateway (saves EIPs)"
+  type        = bool
+  default     = false
+}
+
 # Database
 variable "db_instance_class" {
   description = "RDS instance class"
