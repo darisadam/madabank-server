@@ -145,6 +145,8 @@ module "ecs" {
   container_cpu            = var.container_cpu
   container_memory         = var.container_memory
   desired_count            = var.desired_count
+  min_capacity             = var.min_capacity
+  max_capacity             = var.max_capacity
   jwt_secret_arn           = aws_secretsmanager_secret.jwt_secret.arn
   encryption_key_arn       = aws_secretsmanager_secret.encryption_key.arn
   docker_creds_arn         = aws_secretsmanager_secret.docker_registry_creds.arn
