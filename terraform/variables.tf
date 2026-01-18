@@ -126,3 +126,16 @@ variable "alert_email" {
   description = "Email for CloudWatch alerts"
   type        = string
 }
+
+# Docker Registry Credentials
+variable "docker_username" {
+  description = "Username for Docker Registry"
+  type        = string
+  sensitive   = true
+}
+
+variable "docker_password" {
+  description = "Password/Token for Docker Registry"
+  type        = string
+  sensitive   = true
+}

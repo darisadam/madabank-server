@@ -30,8 +30,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -56,11 +59,29 @@ jobs:
             type=sha,prefix={{branch}}-
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Build AMD64 Binary
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags "-X main.Version=${{ steps.meta.outputs.version }} -X main.CommitSHA=${{ github.sha }} -s -w" -o bin/api-linux-amd64 cmd/api/main.go
+          go build -ldflags "-s -w" -o bin/migrate-linux-amd64 cmd/migrate/main.go
+
+      - name: Build ARM64 Binary
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags "-X main.Version=${{ steps.meta.outputs.version }} -X main.CommitSHA=${{ github.sha }} -s -w" -o bin/api-linux-arm64 cmd/api/main.go
+          go build -ldflags "-s -w" -o bin/migrate-linux-arm64 cmd/migrate/main.go
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./docker/Dockerfile
+          file: ./docker/Dockerfile.fast
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
@@ -92,6 +113,14 @@ jobs:
       url: https://api-dev.madabank.com
     
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Debug repository contents
+        run: |
+          echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
+          ls -R terraform/
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -99,34 +128,20 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy to ECS
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: terraform/environments/dev
+
+      - name: Terraform Apply
         run: |
-          # Get current task definition
-          TASK_DEF=$(aws ecs describe-task-definition \
-            --task-definition madabank-dev \
-            --query 'taskDefinition')
-          
-          # Update image in task definition
-          NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "${{ needs.build-and-push.outputs.image-tag }}" \
-            '.containerDefinitions[0].image = $IMAGE | 
-             del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
-          
-          # Debug: Print the new task definition to verify JSON validity
-          echo "$NEW_TASK_DEF" > task-def.json
-          cat task-def.json
-          
-          # Register new task definition
-          NEW_TASK_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://task-def.json \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
-          
-          # Update service
-          aws ecs update-service \
-            --cluster madabank-dev \
-            --service madabank-dev \
-            --task-definition $NEW_TASK_ARN \
-            --force-new-deployment
+          terraform apply -auto-approve \
+            -var="container_image=${{ needs.build-and-push.outputs.image-tag }}" \
+            -var="docker_username=${{ github.actor }}" \
+            -var="docker_password=${{ secrets.GITHUB_TOKEN }}"
+        working-directory: terraform/environments/dev
 
       - name: Wait for deployment
         run: |
@@ -173,34 +188,20 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy to ECS (Staging)
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: terraform/environments/staging
+
+      - name: Terraform Apply
         run: |
-          # Get current task definition
-          TASK_DEF=$(aws ecs describe-task-definition \
-            --task-definition madabank-staging \
-            --query 'taskDefinition')
-          
-          # Update image in task definition
-          NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "${{ needs.build-and-push.outputs.image-tag }}" \
-            '.containerDefinitions[0].image = $IMAGE | 
-             del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
-          
-          # Debug
-          echo "$NEW_TASK_DEF" > task-def.json
-          cat task-def.json
-          
-          # Register new task definition
-          NEW_TASK_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://task-def.json \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
-          
-          # Update service
-          aws ecs update-service \
-            --cluster madabank-staging \
-            --service madabank-staging \
-            --task-definition $NEW_TASK_ARN \
-            --force-new-deployment
+          terraform apply -auto-approve \
+            -var="container_image=${{ needs.build-and-push.outputs.image-tag }}" \
+            -var="docker_username=${{ github.actor }}" \
+            -var="docker_password=${{ secrets.GITHUB_TOKEN }}"
+        working-directory: terraform/environments/staging
 
       - name: Wait for deployment
         run: |
@@ -244,34 +245,20 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy to ECS (Prod)
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: terraform/environments/prod
+
+      - name: Terraform Apply
         run: |
-          # Get current task definition
-          TASK_DEF=$(aws ecs describe-task-definition \
-            --task-definition madabank-prod \
-            --query 'taskDefinition')
-          
-          # Update image in task definition
-          NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "${{ needs.build-and-push.outputs.image-tag }}" \
-            '.containerDefinitions[0].image = $IMAGE | 
-             del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
-          
-          # Debug
-          echo "$NEW_TASK_DEF" > task-def.json
-          cat task-def.json
-          
-          # Register new task definition
-          NEW_TASK_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://task-def.json \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
-          
-          # Update service
-          aws ecs update-service \
-            --cluster madabank-prod \
-            --service madabank-prod \
-            --task-definition $NEW_TASK_ARN \
-            --force-new-deployment
+          terraform apply -auto-approve \
+            -var="container_image=${{ needs.build-and-push.outputs.image-tag }}" \
+            -var="docker_username=${{ github.actor }}" \
+            -var="docker_password=${{ secrets.GITHUB_TOKEN }}"
+        working-directory: terraform/environments/prod
 
       - name: Wait for deployment
         run: |
