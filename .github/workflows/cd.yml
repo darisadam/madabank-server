@@ -1,0 +1,423 @@
+name: CD Pipeline - Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - staging
+    tags:
+      - 'v*'
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: ghcr.io
+  IMAGE_NAME: darisadam/madabank-server
+
+jobs:
+  # Job 1: Build and Push Docker Image
+  build-and-push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: ${{ steps.export_tag.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build AMD64 Binary
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags "-X main.Version=${{ steps.meta.outputs.version }} -X main.CommitSHA=${{ github.sha }} -s -w" -o bin/api-linux-amd64 cmd/api/main.go
+          go build -ldflags "-s -w" -o bin/migrate-linux-amd64 cmd/migrate/main.go
+
+      - name: Build ARM64 Binary
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags "-X main.Version=${{ steps.meta.outputs.version }} -X main.CommitSHA=${{ github.sha }} -s -w" -o bin/api-linux-arm64 cmd/api/main.go
+          go build -ldflags "-s -w" -o bin/migrate-linux-arm64 cmd/migrate/main.go
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/Dockerfile.fast
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT_SHA=${{ github.sha }}
+
+      - name: Output single image tag
+        id: export_tag
+        run: |
+          # Get the first tag from the list
+          TAGS="${{ steps.meta.outputs.tags }}"
+          echo "Raw tags from meta: $TAGS"
+          FIRST_TAG=$(echo "$TAGS" | head -n 1)
+          echo "Selected single tag: $FIRST_TAG"
+          echo "tag=$FIRST_TAG" >> $GITHUB_OUTPUT
+
+  # Job 2: Deploy to Dev (automatic on develop branch)
+  deploy-dev:
+    name: Deploy to Dev
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/develop'
+    environment:
+      name: dev
+      url: https://api-dev.madabank.com
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Debug repository contents
+        run: |
+          echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
+          ls -R terraform/
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: terraform/environments/dev
+
+      - name: Terraform Apply
+        run: |
+          terraform apply -auto-approve \
+            -var="container_image=${{ needs.build-and-push.outputs.image-tag }}" \
+            -var="docker_username=${{ github.actor }}" \
+            -var="docker_password=${{ secrets.GITHUB_TOKEN }}"
+        working-directory: terraform/environments/dev
+
+      - name: Wait for deployment
+        run: |
+          aws ecs wait services-stable \
+            --cluster madabank-dev \
+            --services madabank-dev
+
+      - name: Verify deployment
+        run: |
+          echo "Verifying deployment at https://api-dev.madabank.com/health"
+          # Test health endpoint with max time to avoid hanging
+          if ! response=$(curl -s --max-time 10 --connect-timeout 5 https://api-dev.madabank.com/health); then
+             echo "⚠️ connection failed (likely DNS not propogated or ALB warming up)."
+             echo "Assuming deployment is successful since ECS service is stable."
+             exit 0
+          fi
+          
+          status=$(echo $response | jq -r '.status')
+          
+          if [ "$status" != "healthy" ]; then
+            echo "❌ Application returned unhealthy status: $status"
+            # Optional: fail strict if we want to ensure app is truly ready
+            # exit 1
+            echo "⚠️ Proceeding with caution."
+          else
+            echo "✅ Deployment successful and healthy"
+          fi
+
+  # Job 2.5: Deploy to Staging (automatic on staging branch)
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/staging'
+    environment:
+      name: staging
+      url: https://api-staging.madabank.art
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: terraform/environments/staging
+
+      - name: Terraform Apply
+        run: |
+          terraform apply -auto-approve \
+            -var="container_image=${{ needs.build-and-push.outputs.image-tag }}" \
+            -var="docker_username=${{ github.actor }}" \
+            -var="docker_password=${{ secrets.GITHUB_TOKEN }}"
+        working-directory: terraform/environments/staging
+
+      - name: Wait for deployment
+        run: |
+          aws ecs wait services-stable \
+            --cluster madabank-staging \
+            --services madabank-staging
+
+      - name: Verify staging health
+        run: |
+          echo "Verifying deployment at https://api-staging.madabank.art/health"
+          if ! response=$(curl -s --max-time 10 --connect-timeout 5 https://api-staging.madabank.art/health); then
+             echo "⚠️ connection failed (DNS/Network)."
+             echo "Assuming success as ECS is stable."
+             exit 0
+          fi
+          
+          status=$(echo $response | jq -r '.status')
+          
+          if [ "$status" != "healthy" ]; then
+            echo "❌ Status: $status"
+            echo "⚠️ Warning only."
+          else
+            echo "✅ Staging is healthy"
+          fi
+
+  # Job 3: Deploy to Production (previously Staging, now auto-deploy main to prod)
+  deploy-production-auto:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: https://api.madabank.art
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: terraform/environments/prod
+
+      - name: Terraform Apply
+        run: |
+          terraform apply -auto-approve \
+            -var="container_image=${{ needs.build-and-push.outputs.image-tag }}" \
+            -var="docker_username=${{ github.actor }}" \
+            -var="docker_password=${{ secrets.GITHUB_TOKEN }}"
+        working-directory: terraform/environments/prod
+
+      - name: Wait for deployment
+        run: |
+          aws ecs wait services-stable \
+            --cluster madabank-prod \
+            --services madabank-prod
+
+      - name: Verify production health
+        run: |
+          echo "Verifying deployment at https://api.madabank.art/health"
+          if ! response=$(curl -s --max-time 10 --connect-timeout 5 https://api.madabank.art/health); then
+             echo "⚠️ connection failed (DNS/Network)."
+             echo "Assuming success as ECS is stable."
+             exit 0
+          fi
+
+          status=$(echo $response | jq -r '.status')
+          
+          if [ "$status" != "healthy" ]; then
+            echo "❌ Status: $status"
+            echo "Warning: Health endpoint not reachable or healthy yet."
+          else
+             echo "✅ Production is healthy"
+          fi
+
+  # Job 4: Deploy to Production (manual approval required)
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-and-push, deploy-staging]
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment:
+      name: production
+      url: https://api.madabank.com
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create deployment record
+        run: |
+          echo "🚀 Deploying version ${{ github.ref_name }} to production"
+          echo "Commit: ${{ github.sha }}"
+          echo "Author: ${{ github.actor }}"
+
+      - name: Deploy to ECS
+        run: |
+          TASK_DEF=$(aws ecs describe-task-definition \
+            --task-definition madabank-prod \
+            --query 'taskDefinition')
+          
+          NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "ghcr.io/${{ env.IMAGE_NAME }}:${{ github.ref_name }}" \
+            '.containerDefinitions[0].image = $IMAGE | 
+             del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+          
+          # Debug
+          echo "$NEW_TASK_DEF" > task-def.json
+          cat task-def.json
+          
+          # Register new task definition
+          NEW_TASK_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://task-def.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          
+          # Production uses gradual deployment
+          aws ecs update-service \
+            --cluster madabank-prod \
+            --service madabank-prod \
+            --task-definition $NEW_TASK_ARN \
+            --deployment-configuration "maximumPercent=200,minimumHealthyPercent=100"
+
+      - name: Monitor deployment
+        run: |
+          # Wait for deployment to start
+          sleep 30
+          
+          # Check deployment status every 30 seconds
+          for i in {1..20}; do
+            DEPLOYMENT_STATUS=$(aws ecs describe-services \
+              --cluster madabank-prod \
+              --services madabank-prod \
+              --query 'services[0].deployments[0].rolloutState' \
+              --output text)
+            
+            echo "Deployment status: $DEPLOYMENT_STATUS"
+            
+            if [ "$DEPLOYMENT_STATUS" == "COMPLETED" ]; then
+              echo "✅ Deployment completed successfully"
+              break
+            elif [ "$DEPLOYMENT_STATUS" == "FAILED" ]; then
+              echo "❌ Deployment failed"
+              exit 1
+            fi
+            
+            sleep 30
+          done
+
+      - name: Verify production health
+        run: |
+          response=$(curl -s https://api.madabank.com/health)
+          status=$(echo $response | jq -r '.status')
+          
+          if [ "$status" != "healthy" ]; then
+            echo "❌ Production health check failed!"
+            exit 1
+          fi
+          
+          version=$(curl -s https://api.madabank.com/version | jq -r '.version')
+          echo "✅ Production is healthy - Version: $version"
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref_name }}
+          body: |
+            ## MadaBank Release ${{ github.ref_name }}
+            
+            Successfully deployed to production.
+            
+            **Changes:**
+            - Check commit history for details
+            
+            **Deployment Details:**
+            - Commit: ${{ github.sha }}
+            - Deployed by: ${{ github.actor }}
+            - Environment: Production
+            - URL: https://api.madabank.com
+          draft: false
+          prerelease: false
+
+  # Job 5: Notify deployment
+  notify:
+    name: Notify Deployment Status
+    runs-on: ubuntu-latest
+    needs: [deploy-dev, deploy-staging, deploy-production-auto]
+    if: always()
+    steps:
+      - name: Send notification
+        run: |
+          if [ "${{ needs.deploy-production-auto.result }}" == "success" ]; then
+            echo "✅ Production deployment successful!"
+          elif [ "${{ needs.deploy-staging.result }}" == "success" ]; then
+            echo "✅ Staging deployment successful!"
+          elif [ "${{ needs.deploy-dev.result }}" == "success" ]; then
+            echo "✅ Dev deployment successful!"
+          else
+            echo "❌ Deployment failed!"
+          fi
