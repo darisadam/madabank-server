@@ -114,6 +114,18 @@ variable "desired_count" {
   default     = 2
 }
 
+variable "min_capacity" {
+  description = "Minimum task count for autoscaling"
+  type        = number
+  default     = 1
+}
+
+variable "max_capacity" {
+  description = "Maximum task count for autoscaling"
+  type        = number
+  default     = 5
+}
+
 # ALB
 variable "certificate_arn" {
   description = "ACM certificate ARN for HTTPS"
