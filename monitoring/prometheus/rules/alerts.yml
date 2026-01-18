@@ -1,0 +1,169 @@
+groups:
+  - name: madabank_api_alerts
+    interval: 30s
+    rules:
+      # API Health Alerts
+      - alert: APIDown
+        expr: up{job="madabank-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "MadaBank API is down"
+          description: "API has been down for more than 1 minute"
+
+      # Transaction Alerts
+      - alert: HighTransactionFailureRate
+        expr: |
+          (
+            sum(rate(madabank_transactions_total{status="failed"}[5m]))
+            /
+            sum(rate(madabank_transactions_total[5m]))
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: transactions
+        annotations:
+          summary: "High transaction failure rate"
+          description: "Transaction failure rate is above 10% for the last 5 minutes (current: {{ $value | humanizePercentage }})"
+
+      - alert: SlowTransactions
+        expr: histogram_quantile(0.95, rate(madabank_transaction_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          component: transactions
+        annotations:
+          summary: "Slow transaction processing"
+          description: "95th percentile transaction duration is above 2 seconds (current: {{ $value }}s)"
+
+      - alert: NoTransactionsProcessed
+        expr: rate(madabank_transactions_total[10m]) == 0
+        for: 10m
+        labels:
+          severity: info
+          component: transactions
+        annotations:
+          summary: "No transactions processed"
+          description: "No transactions have been processed in the last 10 minutes"
+
+      # Authentication Alerts
+      - alert: HighAuthFailureRate
+        expr: |
+          (
+            sum(rate(madabank_auth_attempts_total{status="failed"}[5m]))
+            /
+            sum(rate(madabank_auth_attempts_total[5m]))
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          component: auth
+        annotations:
+          summary: "High authentication failure rate"
+          description: "Auth failure rate is above 50% (possible brute force attack)"
+
+      - alert: SuspiciousAuthActivity
+        expr: rate(madabank_auth_attempts_total{status="failed"}[1m]) > 10
+        for: 2m
+        labels:
+          severity: critical
+          component: auth
+        annotations:
+          summary: "Suspicious authentication activity"
+          description: "More than 10 failed login attempts per second detected"
+
+      # HTTP Alerts
+      - alert: HighHTTPErrorRate
+        expr: |
+          (
+            sum(rate(madabank_http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(madabank_http_requests_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "High HTTP 5xx error rate"
+          description: "HTTP 5xx error rate is above 5% (current: {{ $value | humanizePercentage }})"
+
+      - alert: SlowHTTPRequests
+        expr: histogram_quantile(0.95, rate(madabank_http_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "Slow HTTP requests"
+          description: "95th percentile HTTP request duration is above 1 second"
+
+      # Database Alerts
+      - alert: HighDatabaseConnections
+        expr: madabank_db_connections_active > 20
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "High database connection count"
+          description: "Active database connections: {{ $value }}"
+
+      - alert: SlowDatabaseQueries
+        expr: histogram_quantile(0.95, rate(madabank_db_query_duration_seconds_bucket[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Slow database queries"
+          description: "95th percentile query duration is above 500ms"
+
+  - name: infrastructure_alerts
+    interval: 30s
+    rules:
+      # PostgreSQL Alerts
+      - alert: PostgreSQLDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "PostgreSQL has been down for more than 1 minute"
+
+      # Redis Alerts
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: warning
+          component: cache
+        annotations:
+          summary: "Redis is down"
+          description: "Redis has been down for more than 1 minute"
+
+      # System Alerts
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is above 90%"
+
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is above 80%"

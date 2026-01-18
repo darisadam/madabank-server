@@ -1,0 +1,69 @@
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck      # Check for unchecked errors
+    - gosimple      # Simplify code
+    - govet         # Vet examines Go source code
+    - ineffassign   # Detect ineffectual assignments
+    - staticcheck   # Static analysis
+    - unused        # Check for unused constants, variables, functions and types
+    - gofmt         # Check formatting
+    - goimports     # Check imports
+    - misspell      # Spell checker
+    - revive        # Replacement for golint
+    - bodyclose     # Check HTTP response body is closed
+    - gosec         # Security checker
+    - unconvert     # Remove unnecessary type conversions
+    - unparam       # Find unused function parameters
+    - goconst       # Find repeated strings that could be constants
+    - prealloc      # Find slice declarations that could be preallocated
+    - exportloopref # Check for loop variable capture
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  
+  govet:
+    check-shadowing: true
+  
+  revive:
+    rules:
+      - name: exported
+        severity: warning
+      - name: var-naming
+        severity: warning
+      - name: package-comments
+        severity: warning
+  
+  gosec:
+    excludes:
+      - G104  # Audit errors not checked (covered by errcheck)
+      - G307  # Defer without checking error
+  
+  gofmt:
+    simplify: true
+
+issues:
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - gosec
+        - errcheck
+    
+    # Exclude specific gosec rules in test files
+    - path: _test\.go
+      text: "G404:"  # Use of weak random number generator
+
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
