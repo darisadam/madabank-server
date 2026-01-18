@@ -113,7 +113,13 @@ jobs:
       url: https://api-dev.madabank.com
     
     steps:
-      - name: Configure AWS credentials
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Debug repository contents
+        run: |
+          echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
+          ls -R terraform/
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
