@@ -2,46 +2,72 @@
 
 To prevent your AWS credits from draining, you can "pause" your environment when not in use. You **DO NOT** need to destroy everything (which deletes data).
 
-## Option 1: The "Pause" Button (Recommended)
+## 🚀 Quick Management Scripts (Recommended)
 
-This stops the compute resources (ECS & RDS) so you stop paying hourly rates, but keeps your data (Storage/EBS) and networking (ALB/VPC).
+We have provided wrapper scripts for each environment to make this easy. These scripts perform a **graceful shutdown** (draining ECS connections first) before stopping the database.
 
-### 🛑 STOP Everything
-Run this command (or script provided below):
+### 🏠 Development
 ```bash
-# 1. Scale ECS Service to 0 (Stops containers)
-aws ecs update-service --cluster madabank-prod --service madabank-prod --desired-count 0
+# Stop Dev
+./scripts/manage-dev.sh stop
 
-# 2. Stop RDS Database (Stops compute)
-aws rds stop-db-instance --db-instance-identifier madabank-prod
-```
-*Note: RDS will automatically restart after 7 days (AWS rule).*
-
-### ▶️ START Everything
-```bash
-# 1. Start RDS Database
-aws rds start-db-instance --db-instance-identifier madabank-prod
-
-# 2. Wait a few minutes, then Scale ECS Service to 1 (or 3)
-aws ecs update-service --cluster madabank-prod --service madabank-prod --desired-count 1
+# Start Dev
+./scripts/manage-dev.sh start
 ```
 
-## Option 2: The "Nuke" Button (Terraform Destroy)
-**⚠️ WARNING: DELETES ALL DATA IN DATABASE**
+### 🧪 Staging
+```bash
+# Stop Staging
+./scripts/manage-staging.sh stop
 
-Only do this if you are done with the project or have backups.
+# Start Staging
+./scripts/manage-staging.sh start
+```
+
+### 🏭 Production
+```bash
+# Stop Production (Requires Confirmation)
+./scripts/manage-prod.sh stop
+
+# Start Production
+./scripts/manage-prod.sh start
+```
+
+### 🌍 All Environments (Global)
+Manage everything at once (useful for "end of day" shutdown).
+
+```bash
+# Stop ALL environments (Dev, Staging, Prod)
+./scripts/manage-all.sh stop
+
+# Start ALL environments
+./scripts/manage-all.sh start
+```
+
+---
+
+## ⚙️ How it Works (Under the Hood)
+
+These scripts call `scripts/cost-saver.sh`, which performs the following steps:
+
+1.  **Identify Resources**: Finds the RDS Instance and ECS Services for the target environment.
+2.  **Stop Sequence**:
+    *   Scales ECS Services to `0` desired tasks.
+    *   **Waits** for services to stabilize (draining connections).
+    *   Stops the RDS Database Instance.
+3.  **Start Sequence**:
+    *   Starts the RDS Database Instance.
+    *   **Waits** for the DB to be available.
+    *   Scales ECS Services back to `1` (or original count).
+    *   Waits for services to stabilize.
+
+## 🗑️ Option 2: The "Nuke" Button (Terraform Destroy)
+
+**⚠️ WARNING: DELETES ALL DATA IN DATABASE PERMANENTLY**
+
+Only do this if you are done with the project or want to rebuild from scratch.
+
 ```bash
 cd terraform/environments/prod
 terraform destroy
-```
-
-## Option 3: Use the Helper Script
-I have created a script `scripts/cost-saver.sh` for you.
-
-```bash
-# Stop everything
-./scripts/cost-saver.sh stop prod
-
-# Start everything
-./scripts/cost-saver.sh start prod
 ```
