@@ -32,7 +32,7 @@ resource "aws_db_subnet_group" "main" {
 # DB Parameter Group
 resource "aws_db_parameter_group" "main" {
   name_prefix = "${var.project_name}-${var.environment}-"
-  family      = "postgres15"
+  family      = "postgres16"
 
   parameter {
     name  = "log_connections"
@@ -63,8 +63,11 @@ resource "aws_db_instance" "main" {
   identifier_prefix = "${var.project_name}-${var.environment}-"
 
   engine         = "postgres"
-  engine_version = "15.7"
+  engine_version = "16.3"
   instance_class = var.db_instance_class
+
+  allow_major_version_upgrade = true
+  apply_immediately           = true
 
   allocated_storage     = var.db_allocated_storage
   max_allocated_storage = var.db_allocated_storage * 2
