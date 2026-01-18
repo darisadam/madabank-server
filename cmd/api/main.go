@@ -74,9 +74,12 @@ func main() {
 	// Start metrics collector goroutine
 	go collectSystemMetrics(db)
 
-	// Initialize Redis client
 	redisClient := initRedis()
-	defer redisClient.Close()
+	defer func() {
+		if err := redisClient.Close(); err != nil {
+			logger.Error("failed to close redis client", zap.Error(err))
+		}
+	}()
 
 	// Initialize rate limiter
 	rateLimiter := ratelimit.NewRateLimiter(redisClient)
