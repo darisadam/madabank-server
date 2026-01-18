@@ -186,3 +186,53 @@ func (h *UserHandler) RefreshToken(c *gin.Context) {
 
 	c.JSON(http.StatusOK, response)
 }
+
+// ForgotPassword godoc
+// @Summary Request password reset OTP
+// @Description Sends a 6-digit OTP to the user's email (Mocked in logs)
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body user.ForgotPasswordRequest true "Email address"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Router /api/v1/auth/forgot-password [post]
+func (h *UserHandler) ForgotPassword(c *gin.Context) {
+	var req user.ForgotPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.userService.ForgotPassword(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "If this email exists, an OTP has been sent."})
+}
+
+// ResetPassword godoc
+// @Summary Reset password using OTP
+// @Description Reset password with a valid OTP code
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body user.ResetPasswordRequest true "Reset details"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Router /api/v1/auth/reset-password [post]
+func (h *UserHandler) ResetPassword(c *gin.Context) {
+	var req user.ResetPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.userService.ResetPassword(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Password reset successfully"})
+}
