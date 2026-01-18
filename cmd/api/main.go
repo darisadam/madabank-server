@@ -116,7 +116,7 @@ func main() {
 
 	// Initialize services
 	securityService := service.NewSecurityService()
-	userService := service.NewUserService(userRepo, jwtService)
+	userService := service.NewUserService(userRepo, jwtService, redisClient)
 	accountService := service.NewAccountService(accountRepo)
 	transactionService := service.NewTransactionService(transactionRepo, accountRepo, auditRepo, userRepo)
 	cardService := service.NewCardService(cardRepo, accountRepo, userRepo, encryptor)
@@ -208,6 +208,8 @@ func main() {
 			auth.POST("/register", userHandler.Register)
 			auth.POST("/login", userHandler.Login)
 			auth.POST("/refresh", userHandler.RefreshToken)
+			auth.POST("/forgot-password", userHandler.ForgotPassword)
+			auth.POST("/reset-password", userHandler.ResetPassword)
 		}
 
 		// Protected routes
