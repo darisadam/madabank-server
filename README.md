@@ -73,10 +73,11 @@ See [SECURITY.md](docs/SECURITY.md) for details.
 
 ## 📚 Documentation
 
-- [API Documentation](docs/API.md)
+- [API Reference](docs/API.md)
 - [Architecture Overview](docs/ARCHITECTURE.md)
 - [Security Model](docs/SECURITY.md)
 - [Deployment Guide](docs/DEPLOYMENT.md)
+- [Cost Management](docs/COST_MANAGEMENT.md)
 - [Contributing Guidelines](CONTRIBUTING.md)
 
 ## 🛠️ Tech Stack
@@ -110,40 +111,34 @@ go test -v ./tests/integration/...
 go test -bench=. -benchmem ./...
 ```
 
-## 🚀 Deployment
+## 🏆 Key Engineering Challenges Solved
 
-This project uses a **Tuple Deployment Strategy** with fully isolated environments:
+This project goes beyond basic CRUD, tackling real-world distributed system challenges:
 
-| Environment | Branch | URL | Purpose |
-|-------------|--------|-----|---------|
-| **Development** | `develop` | `https://api-dev.madabank.art` | Frontend Integration Testing |
-| **Staging** | `staging` | `https://api-staging.madabank.art` | QA & Acceptance Testing |
-| **Production** | `main` | `https://api.madabank.art` | Live User Traffic |
+*   **Distributed ACID Transactions**: Implemented a custom transaction manager ensuring data integrity across complex financial operations (Transfer, Payment, Topup).
+*   **Zero-Downtime Deployments**: Configured AWS ECS with Rolling Updates and Connection Draining to ensure 100% availability during releases.
+*   **Encryption at Scale**: Designed an End-to-End Encryption (E2EE) module using AES-256 + RSA-2048 to protect sensitive card data from the client to the database, ensuring PCI-DSS compliance concepts.
+*   **Cost vs. Performance Optimization**: Architected Terraform modules to support "Single NAT Gateway" for Dev/Staging (saving $150/mo) while maintaining Multi-AZ redundancy for Production.
 
-### 💰 Cost Management (New)
-To prevent AWS bill shock, we have implemented a "shutdown" mechanism for non-production hours.
-See [Cost Management Guide](docs/COST_MANAGEMENT.md).
+## 🚀 Deployment & Environments
 
-### Deployment Commands
+We utilize a **Tuple Deployment Strategy** with fully isolated environments managed by Terraform.
 
-#### Staging (Manual Trigger via Git)
+| Environment | Branch | URL | Infrastructure |
+|-------------|--------|-----|----------------|
+| **Development** | `develop` | `api-dev.madabank.art` | Cost-Optimized (Single AZ) |
+| **Staging** | `staging` | `api-staging.madabank.art` | QA Replica (Single AZ) |
+| **Production** | `main` | `api.madabank.art` | **High Availability (Multi-AZ)** |
+
+👉 **[Read the Full Deployment Guide](docs/DEPLOYMENT.md)**
+
+### 💰 Cloud Cost Management
+To demonstrate FinOps practices, this project includes automated scripts to "pause" environments when not in use.
+👉 **[See Cost Management Guide](docs/COST_MANAGEMENT.md)**
+
 ```bash
-git checkout staging
-git merge develop
-git push origin staging
-```
-
-#### Production (Automatic)
-```bash
-git checkout main
-git merge staging
-git push origin main
-```
-
-#### Production Release (Tagging)
-```bash
-git tag -a v1.0.0 -m "Release v1.0.0"
-git push origin v1.0.0
+# Example: Stop all non-production environments
+./scripts/manage-dev.sh stop
 ```
 
 ## 📈 Roadmap

@@ -74,9 +74,12 @@ func main() {
 	// Start metrics collector goroutine
 	go collectSystemMetrics(db)
 
-	// Initialize Redis client
 	redisClient := initRedis()
-	defer redisClient.Close()
+	defer func() {
+		if err := redisClient.Close(); err != nil {
+			logger.Error("failed to close redis client", zap.Error(err))
+		}
+	}()
 
 	// Initialize rate limiter
 	rateLimiter := ratelimit.NewRateLimiter(redisClient)
@@ -116,7 +119,7 @@ func main() {
 
 	// Initialize services
 	securityService := service.NewSecurityService()
-	userService := service.NewUserService(userRepo, jwtService)
+	userService := service.NewUserService(userRepo, jwtService, redisClient)
 	accountService := service.NewAccountService(accountRepo)
 	transactionService := service.NewTransactionService(transactionRepo, accountRepo, auditRepo, userRepo)
 	cardService := service.NewCardService(cardRepo, accountRepo, userRepo, encryptor)
@@ -208,6 +211,8 @@ func main() {
 			auth.POST("/register", userHandler.Register)
 			auth.POST("/login", userHandler.Login)
 			auth.POST("/refresh", userHandler.RefreshToken)
+			auth.POST("/forgot-password", userHandler.ForgotPassword)
+			auth.POST("/reset-password", userHandler.ResetPassword)
 		}
 
 		// Protected routes

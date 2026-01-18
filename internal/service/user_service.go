@@ -1,15 +1,19 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"github.com/darisadam/madabank-server/internal/domain/user"
 	"github.com/darisadam/madabank-server/internal/pkg/crypto"
 	"github.com/darisadam/madabank-server/internal/pkg/jwt"
+	"github.com/darisadam/madabank-server/internal/pkg/logger"
 	"github.com/darisadam/madabank-server/internal/pkg/metrics"
 	"github.com/darisadam/madabank-server/internal/repository"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 type UserService interface {
@@ -19,17 +23,21 @@ type UserService interface {
 	UpdateProfile(userID uuid.UUID, req *user.UpdateUserRequest) (*user.User, error)
 	DeleteAccount(userID uuid.UUID) error
 	RefreshToken(refreshToken string) (*user.LoginResponse, error)
+	ForgotPassword(req *user.ForgotPasswordRequest) error
+	ResetPassword(req *user.ResetPasswordRequest) error
 }
 
 type userService struct {
-	userRepo   repository.UserRepository
-	jwtService *jwt.JWTService
+	userRepo    repository.UserRepository
+	jwtService  *jwt.JWTService
+	redisClient *redis.Client
 }
 
-func NewUserService(userRepo repository.UserRepository, jwtService *jwt.JWTService) UserService {
+func NewUserService(userRepo repository.UserRepository, jwtService *jwt.JWTService, redisClient *redis.Client) UserService {
 	return &userService{
-		userRepo:   userRepo,
-		jwtService: jwtService,
+		userRepo:    userRepo,
+		jwtService:  jwtService,
+		redisClient: redisClient,
 	}
 }
 
@@ -247,4 +255,89 @@ func (s *userService) RefreshToken(refreshToken string) (*user.LoginResponse, er
 		ExpiresAt:    newExpiresAt,
 		User:         u,
 	}, nil
+}
+
+func (s *userService) ForgotPassword(req *user.ForgotPasswordRequest) error {
+	// 1. Check if user exists (Silent fail if security paranoid, but for UX we usually check)
+	_, err := s.userRepo.GetByEmail(req.Email)
+	if err != nil {
+		// User not found
+		return fmt.Errorf("user not found")
+	}
+
+	// 2. Check Rate Limit (15 minutes)
+	// Key: rate_limit:otp:{email}
+	rateLimitKey := fmt.Sprintf("rate_limit:otp:%s", req.Email)
+	exists, err := s.redisClient.Exists(context.Background(), rateLimitKey).Result()
+	if err != nil {
+		return fmt.Errorf("redis error: %w", err)
+	}
+	if exists > 0 {
+		return fmt.Errorf("please wait 15 minutes before requesting a new OTP")
+	}
+
+	// 3. Generate 6-digit OTP
+	otp := fmt.Sprintf("%06d", crypto.GenerateSecureRandomInt(999999))
+
+	// 4. Store OTP in Redis with 15m TTL
+	// Key: otp:{email}
+	otpKey := fmt.Sprintf("otp:%s", req.Email)
+	err = s.redisClient.Set(context.Background(), otpKey, otp, 15*time.Minute).Err()
+	if err != nil {
+		return fmt.Errorf("failed to store OTP: %w", err)
+	}
+
+	// 5. Set Rate Limit Key (15m TTL)
+	err = s.redisClient.Set(context.Background(), rateLimitKey, "1", 15*time.Minute).Err()
+	if err != nil {
+		return fmt.Errorf("failed to set rate limit: %w", err)
+	}
+
+	// 6. Send OTP (Mock for now)
+	logger.Info("🔑 [MOCK EMAIL] OTP Sent",
+		zap.String("email", req.Email),
+		zap.String("otp_code", otp),
+	)
+
+	return nil
+}
+
+func (s *userService) ResetPassword(req *user.ResetPasswordRequest) error {
+	// 1. Verify OTP
+	otpKey := fmt.Sprintf("otp:%s", req.Email)
+	storedOTP, err := s.redisClient.Get(context.Background(), otpKey).Result()
+	if err == redis.Nil {
+		return fmt.Errorf("invalid or expired OTP")
+	} else if err != nil {
+		return fmt.Errorf("redis error: %w", err)
+	}
+
+	if storedOTP != req.OTP {
+		return fmt.Errorf("invalid OTP code")
+	}
+
+	// 2. Get User
+	u, err := s.userRepo.GetByEmail(req.Email)
+	if err != nil {
+		return fmt.Errorf("user not found")
+	}
+
+	// 3. Update Password
+	newHash, err := crypto.HashPassword(req.NewPassword)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	updates := map[string]interface{}{
+		"password_hash": newHash,
+	}
+	if err := s.userRepo.Update(u.ID, updates); err != nil {
+		return fmt.Errorf("failed to update password: %w", err)
+	}
+
+	// 4. Delete OTP (Prevent replay)
+	s.redisClient.Del(context.Background(), otpKey)
+
+	logger.Info("✅ Password reset successfully", zap.String("email", req.Email))
+	return nil
 }
