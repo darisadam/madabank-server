@@ -295,9 +295,7 @@ resource "aws_secretsmanager_secret" "docker_registry_creds" {
 resource "aws_secretsmanager_secret_version" "docker_registry_creds" {
   secret_id     = aws_secretsmanager_secret.docker_registry_creds.id
   secret_string = jsonencode({
-  secret_string = jsonencode({
     username = var.docker_username
     password = var.docker_password
-  })
   })
 }
