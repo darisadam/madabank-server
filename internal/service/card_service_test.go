@@ -90,6 +90,9 @@ func TestCreateCard_Success(t *testing.T) {
 		UserID: userID,
 	}, nil)
 
+	// Mock: no existing cards for this account (allows creation)
+	cardRepo.On("GetByAccountID", accountID).Return([]*card.Card{}, nil)
+
 	// Mock card generation
 	cardRepo.On("GenerateCardNumber").Return("4111111111111111", nil)
 	cardRepo.On("GenerateCVV").Return("123")
@@ -152,6 +155,35 @@ func TestCreateCard_Unauthorized(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 	assert.Contains(t, err.Error(), "unauthorized")
+}
+
+func TestCreateCard_OneCardPerAccountLimit(t *testing.T) {
+	svc, cardRepo, accountRepo, _ := setupCardServiceTest(t)
+	userID := uuid.New()
+	accountID := uuid.New()
+
+	req := &card.CreateCardRequest{
+		AccountID:      accountID.String(),
+		CardHolderName: "John Doe",
+		CardType:       "debit",
+	}
+
+	// Mock account ownership
+	accountRepo.On("GetByID", accountID).Return(&domainAccount.Account{
+		ID:     accountID,
+		UserID: userID,
+	}, nil)
+
+	// Mock: account already has a card (should reject)
+	existingCards := []*card.Card{
+		{ID: uuid.New(), AccountID: accountID},
+	}
+	cardRepo.On("GetByAccountID", accountID).Return(existingCards, nil)
+
+	resp, err := svc.CreateCard(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "each account can only have one debit card")
 }
 
 func TestGetUserCards_Success(t *testing.T) {

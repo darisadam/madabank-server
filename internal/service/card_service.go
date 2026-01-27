@@ -56,6 +56,12 @@ func (s *cardService) CreateCard(userID uuid.UUID, req *card.CreateCardRequest) 
 		return nil, fmt.Errorf("unauthorized: account does not belong to user")
 	}
 
+	// Check one card per account limit
+	existingCards, err := s.cardRepo.GetByAccountID(accountID)
+	if err == nil && len(existingCards) >= 1 {
+		return nil, fmt.Errorf("each account can only have one debit card")
+	}
+
 	// Generate card number and CVV
 	cardNumber, err := s.cardRepo.GenerateCardNumber()
 	if err != nil {
