@@ -35,17 +35,12 @@ services:
       - madabank-network
 
   api:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    container_name: madabank-api
-    environment:
-      - ENV=development
-      - DATABASE_URL=postgres://madabank:dev_password_change_in_prod@postgres:5432/madabank?sslmode=disable
-      - REDIS_URL=redis:6379
-      - JWT_SECRET=your-secret-key-change-this
-      - ENCRYPTION_KEY=dev-encryption-key-32-chars-long
-      - PORT=8080
+    image: ghcr.io/darisadam/madabank-server:latest
+    container_name: madabank-api-prod
+    restart: always
+    env_file:
+      - .env
+    # Environment variables will be loaded from the .env file injected by Jenkins
     ports:
       - "8080:8080"
     depends_on:
