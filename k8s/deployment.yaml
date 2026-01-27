@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: madabank-api
+  namespace: madabank
+  labels:
+    app: madabank-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: madabank-api
+  template:
+    metadata:
+      labels:
+        app: madabank-api
+    spec:
+      imagePullSecrets:
+        - name: ghcr-creds
+      initContainers:
+        - name: migrate
+          image: ghcr.io/darisadam/madabank-server:latest
+          command: ["/app/migrate", "up"]
+          envFrom:
+            - secretRef:
+                name: madabank-secrets
+            - configMapRef:
+                name: madabank-config
+      containers:
+        - name: api
+          image: ghcr.io/darisadam/madabank-server:latest
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: madabank-secrets
+            - configMapRef:
+                name: madabank-config
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"

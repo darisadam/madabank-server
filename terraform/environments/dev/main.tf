@@ -8,6 +8,19 @@ terraform {
   }
 }
 
+provider "aws" {
+  region = "us-east-1"
+
+  default_tags {
+    tags = {
+      Project     = "MadaBank"
+      Environment = "dev"
+      ManagedBy   = "Terraform"
+      Owner       = "darisadam.dev@gmail.com"
+    }
+  }
+}
+
 variable "container_image" {
   description = "Docker image tag to deploy"
   type        = string
@@ -26,12 +39,12 @@ variable "docker_password" {
 }
 
 module "madabank" {
-  source = "../../"
+  source = "../../modules/application-stack"
 
   aws_region  = "us-east-1"
   environment = "dev"
   owner       = "darisadam.dev@gmail.com"
-
+  
   # Networking
   vpc_cidr             = "10.0.0.0/16"
   public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
@@ -43,6 +56,8 @@ module "madabank" {
   db_allocated_storage    = 20
   backup_retention_period = 1
   db_multi_az             = false
+  db_name                 = "madabank"
+  db_username             = "madabankadmin"
 
   # Redis - small instance for dev
   redis_node_type       = "cache.t3.micro"
@@ -52,6 +67,8 @@ module "madabank" {
   container_cpu    = 256
   container_memory = 512
   desired_count    = 1
+  min_capacity     = 1
+  max_capacity     = 2
 
   # Monitoring
   alert_email = "darisadam.dev@gmail.com"
@@ -62,6 +79,9 @@ module "madabank" {
   # Docker Credentials
   docker_username = var.docker_username
   docker_password = var.docker_password
+
+  # ALB (Placeholder ARN for dev)
+  certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/placeholder"
 }
 
 output "alb_url" {
