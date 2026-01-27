@@ -80,6 +80,8 @@ func TestCreateAccount_Checking_Success(t *testing.T) {
 		Currency:    "USD",
 	}
 
+	// Mock: user has no existing accounts (allows creation)
+	mockRepo.On("GetByUserID", userID).Return([]*account.Account{}, nil)
 	mockRepo.On("GenerateAccountNumber").Return("1234567890", nil)
 	mockRepo.On("Create", mock.AnythingOfType("*account.Account")).Return(nil)
 
@@ -103,6 +105,8 @@ func TestCreateAccount_Savings_WithDefaultInterest(t *testing.T) {
 		InterestRate: 0, // Should default to 3.25%
 	}
 
+	// Mock: user has no existing accounts (allows creation)
+	mockRepo.On("GetByUserID", userID).Return([]*account.Account{}, nil)
 	mockRepo.On("GenerateAccountNumber").Return("9876543210", nil)
 	mockRepo.On("Create", mock.AnythingOfType("*account.Account")).Return(nil)
 
@@ -114,7 +118,7 @@ func TestCreateAccount_Savings_WithDefaultInterest(t *testing.T) {
 }
 
 func TestCreateAccount_InvalidType(t *testing.T) {
-	svc, _ := setupAccountServiceTest(t)
+	svc, mockRepo := setupAccountServiceTest(t)
 	userID := uuid.New()
 
 	req := &account.CreateAccountRequest{
@@ -122,10 +126,36 @@ func TestCreateAccount_InvalidType(t *testing.T) {
 		Currency:    "USD",
 	}
 
+	// Mock: user has no existing accounts
+	mockRepo.On("GetByUserID", userID).Return([]*account.Account{}, nil)
+
 	acc, err := svc.CreateAccount(userID, req)
 	assert.Error(t, err)
 	assert.Nil(t, acc)
 	assert.Contains(t, err.Error(), "invalid account type")
+}
+
+func TestCreateAccount_MaxAccountsReached(t *testing.T) {
+	svc, mockRepo := setupAccountServiceTest(t)
+	userID := uuid.New()
+
+	req := &account.CreateAccountRequest{
+		AccountType: "checking",
+		Currency:    "IDR",
+	}
+
+	// Mock: user already has 3 accounts (max reached)
+	existingAccounts := []*account.Account{
+		{ID: uuid.New(), UserID: userID},
+		{ID: uuid.New(), UserID: userID},
+		{ID: uuid.New(), UserID: userID},
+	}
+	mockRepo.On("GetByUserID", userID).Return(existingAccounts, nil)
+
+	acc, err := svc.CreateAccount(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, acc)
+	assert.Contains(t, err.Error(), "maximum of 3 accounts")
 }
 
 func TestGetAccount_Success(t *testing.T) {
@@ -337,4 +367,238 @@ func TestValidateStatusTransition_AllCases(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ==================== GetAccountByNumber Tests ====================
+
+func TestGetAccountByNumber_Success(t *testing.T) {
+	svc, mockRepo := setupAccountServiceTest(t)
+	userID := uuid.New()
+	accountNumber := "1234567890"
+
+	expectedAccount := &account.Account{
+		ID:            uuid.New(),
+		UserID:        userID,
+		AccountNumber: accountNumber,
+	}
+
+	mockRepo.On("GetByAccountNumber", accountNumber).Return(expectedAccount, nil)
+
+	acc, err := svc.GetAccountByNumber(accountNumber, userID)
+	assert.NoError(t, err)
+	assert.Equal(t, accountNumber, acc.AccountNumber)
+	mockRepo.AssertExpectations(t)
+}
+
+func TestGetAccountByNumber_NotFound(t *testing.T) {
+	svc, mockRepo := setupAccountServiceTest(t)
+	userID := uuid.New()
+	accountNumber := "nonexistent"
+
+	mockRepo.On("GetByAccountNumber", accountNumber).Return(nil, fmt.Errorf("account not found"))
+
+	acc, err := svc.GetAccountByNumber(accountNumber, userID)
+	assert.Error(t, err)
+	assert.Nil(t, acc)
+	mockRepo.AssertExpectations(t)
+}
+
+func TestGetAccountByNumber_Unauthorized(t *testing.T) {
+	svc, mockRepo := setupAccountServiceTest(t)
+	ownerID := uuid.New()
+	requestorID := uuid.New() // Different user
+	accountNumber := "1234567890"
+
+	existingAccount := &account.Account{
+		ID:            uuid.New(),
+		UserID:        ownerID, // Belongs to different user
+		AccountNumber: accountNumber,
+	}
+
+	mockRepo.On("GetByAccountNumber", accountNumber).Return(existingAccount, nil)
+
+	acc, err := svc.GetAccountByNumber(accountNumber, requestorID)
+	assert.Error(t, err)
+	assert.Nil(t, acc)
+	assert.Contains(t, err.Error(), "unauthorized access")
+	mockRepo.AssertExpectations(t)
+}
+
+// ==================== GetBalance Additional Tests ====================
+
+func TestGetBalance_Unauthorized(t *testing.T) {
+	svc, mockRepo := setupAccountServiceTest(t)
+	ownerID := uuid.New()
+	requestorID := uuid.New()
+	accountID := uuid.New()
+
+	existingAccount := &account.Account{
+		ID:     accountID,
+		UserID: ownerID,
+	}
+
+	mockRepo.On("GetByID", accountID).Return(existingAccount, nil)
+
+	balance, err := svc.GetBalance(accountID, requestorID)
+	assert.Error(t, err)
+	assert.Nil(t, balance)
+	assert.Contains(t, err.Error(), "unauthorized access")
+}
+
+// ==================== UpdateAccount Additional Tests ====================
+
+func TestUpdateAccount_UpdateStatusToFrozen(t *testing.T) {
+	svc, mockRepo := setupAccountServiceTest(t)
+	userID := uuid.New()
+	accountID := uuid.New()
+
+	existingAccount := &account.Account{
+		ID:     accountID,
+		UserID: userID,
+		Status: account.AccountStatusActive,
+	}
+
+	status := "frozen"
+	req := &account.UpdateAccountRequest{Status: &status}
+
+	mockRepo.On("GetByID", accountID).Return(existingAccount, nil).Once()
+	mockRepo.On("Update", accountID, mock.AnythingOfType("map[string]interface {}")).Return(nil)
+	// After update, GetAccount is called again
+	updatedAccount := &account.Account{
+		ID:     accountID,
+		UserID: userID,
+		Status: account.AccountStatusFrozen,
+	}
+	mockRepo.On("GetByID", accountID).Return(updatedAccount, nil).Once()
+
+	acc, err := svc.UpdateAccount(accountID, userID, req)
+	assert.NoError(t, err)
+	assert.Equal(t, account.AccountStatusFrozen, acc.Status)
+	mockRepo.AssertExpectations(t)
+}
+
+func TestUpdateAccount_Unauthorized(t *testing.T) {
+	svc, mockRepo := setupAccountServiceTest(t)
+	ownerID := uuid.New()
+	requestorID := uuid.New()
+	accountID := uuid.New()
+
+	existingAccount := &account.Account{
+		ID:     accountID,
+		UserID: ownerID,
+	}
+
+	status := "frozen"
+	req := &account.UpdateAccountRequest{Status: &status}
+
+	mockRepo.On("GetByID", accountID).Return(existingAccount, nil)
+
+	acc, err := svc.UpdateAccount(accountID, requestorID, req)
+	assert.Error(t, err)
+	assert.Nil(t, acc)
+	assert.Contains(t, err.Error(), "unauthorized access")
+}
+
+func TestUpdateAccount_UpdateFails(t *testing.T) {
+	svc, mockRepo := setupAccountServiceTest(t)
+	userID := uuid.New()
+	accountID := uuid.New()
+
+	existingAccount := &account.Account{
+		ID:     accountID,
+		UserID: userID,
+		Status: account.AccountStatusActive,
+	}
+
+	status := "frozen"
+	req := &account.UpdateAccountRequest{Status: &status}
+
+	mockRepo.On("GetByID", accountID).Return(existingAccount, nil).Once()
+	mockRepo.On("Update", accountID, mock.AnythingOfType("map[string]interface {}")).Return(fmt.Errorf("database error"))
+
+	acc, err := svc.UpdateAccount(accountID, userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, acc)
+}
+
+// ==================== CloseAccount Additional Tests ====================
+
+func TestCloseAccount_Unauthorized(t *testing.T) {
+	svc, mockRepo := setupAccountServiceTest(t)
+	ownerID := uuid.New()
+	requestorID := uuid.New()
+	accountID := uuid.New()
+
+	existingAccount := &account.Account{
+		ID:      accountID,
+		UserID:  ownerID,
+		Balance: 0,
+	}
+
+	mockRepo.On("GetByID", accountID).Return(existingAccount, nil)
+
+	err := svc.CloseAccount(accountID, requestorID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unauthorized access")
+	mockRepo.AssertNotCalled(t, "Delete", mock.Anything)
+}
+
+func TestCloseAccount_NotFound(t *testing.T) {
+	svc, mockRepo := setupAccountServiceTest(t)
+	userID := uuid.New()
+	accountID := uuid.New()
+
+	mockRepo.On("GetByID", accountID).Return(nil, fmt.Errorf("account not found"))
+
+	err := svc.CloseAccount(accountID, userID)
+	assert.Error(t, err)
+	mockRepo.AssertNotCalled(t, "Delete", mock.Anything)
+}
+
+// ==================== CreateAccount Additional Tests ====================
+
+func TestCreateAccount_GenerateAccountNumberFails(t *testing.T) {
+	svc, mockRepo := setupAccountServiceTest(t)
+	userID := uuid.New()
+
+	req := &account.CreateAccountRequest{
+		AccountType: "checking",
+		Currency:    "IDR",
+	}
+
+	mockRepo.On("GetByUserID", userID).Return([]*account.Account{}, nil)
+	mockRepo.On("GenerateAccountNumber").Return("", fmt.Errorf("failed to generate"))
+
+	acc, err := svc.CreateAccount(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, acc)
+}
+
+func TestCreateAccount_CreateFails(t *testing.T) {
+	svc, mockRepo := setupAccountServiceTest(t)
+	userID := uuid.New()
+
+	req := &account.CreateAccountRequest{
+		AccountType: "checking",
+		Currency:    "IDR",
+	}
+
+	mockRepo.On("GetByUserID", userID).Return([]*account.Account{}, nil)
+	mockRepo.On("GenerateAccountNumber").Return("1234567890", nil)
+	mockRepo.On("Create", mock.AnythingOfType("*account.Account")).Return(fmt.Errorf("database error"))
+
+	acc, err := svc.CreateAccount(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, acc)
+}
+
+func TestGetUserAccounts_Error(t *testing.T) {
+	svc, mockRepo := setupAccountServiceTest(t)
+	userID := uuid.New()
+
+	mockRepo.On("GetByUserID", userID).Return(nil, fmt.Errorf("database error"))
+
+	accounts, err := svc.GetUserAccounts(userID)
+	assert.Error(t, err)
+	assert.Nil(t, accounts)
 }

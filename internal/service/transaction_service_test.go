@@ -131,6 +131,7 @@ func TestTransfer_Success(t *testing.T) {
 		UserID:   userID,
 		Currency: "USD",
 		Balance:  500.00,
+		Status:   domainAccount.AccountStatusActive,
 	}, nil)
 
 	// Mock destination account
@@ -138,6 +139,7 @@ func TestTransfer_Success(t *testing.T) {
 		ID:       toAccountID,
 		UserID:   uuid.New(), // Different user
 		Currency: "USD",
+		Status:   domainAccount.AccountStatusActive,
 	}, nil)
 
 	// Mock execute transfer
@@ -276,12 +278,14 @@ func TestTransfer_CurrencyMismatch(t *testing.T) {
 		ID:       fromAccountID,
 		UserID:   userID,
 		Currency: "USD",
+		Status:   domainAccount.AccountStatusActive,
 	}, nil)
 
 	accountRepo.On("GetByID", toAccountID).Return(&domainAccount.Account{
 		ID:       toAccountID,
 		UserID:   uuid.New(),
 		Currency: "EUR", // Different currency
+		Status:   domainAccount.AccountStatusActive,
 	}, nil)
 
 	result, err := svc.Transfer(userID, req)
@@ -376,6 +380,7 @@ func TestWithdrawal_Success(t *testing.T) {
 		UserID:   userID,
 		Currency: "USD",
 		Balance:  1000.00,
+		Status:   domainAccount.AccountStatusActive,
 	}, nil)
 
 	txnRepo.On("ExecuteWithdrawal", accountID, 200.00, mock.AnythingOfType("*transaction.Transaction")).Return(nil)
@@ -414,6 +419,7 @@ func TestWithdrawal_InsufficientFunds(t *testing.T) {
 		UserID:   userID,
 		Currency: "USD",
 		Balance:  500.00,
+		Status:   domainAccount.AccountStatusActive,
 	}, nil)
 
 	// ExecuteWithdrawal returns an error
@@ -614,4 +620,376 @@ func TestResolveQR_AccountNotFound(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "account not found")
+}
+
+// ==================== Transfer Amount Limits Tests ====================
+
+func TestTransfer_AmountBelowMinimum(t *testing.T) {
+	svc, _, _, _, _ := setupTransactionServiceTest(t)
+	userID := uuid.New()
+
+	req := &transaction.TransferRequest{
+		FromAccountID:  uuid.New().String(),
+		ToAccountID:    uuid.New().String(),
+		Amount:         0.5, // Below minimum of 1 IDR
+		IdempotencyKey: "key",
+	}
+
+	result, err := svc.Transfer(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "minimum transfer amount")
+}
+
+func TestTransfer_AmountAboveMaximum(t *testing.T) {
+	svc, _, _, _, _ := setupTransactionServiceTest(t)
+	userID := uuid.New()
+
+	req := &transaction.TransferRequest{
+		FromAccountID:  uuid.New().String(),
+		ToAccountID:    uuid.New().String(),
+		Amount:         15_000_000, // Above maximum of 10M IDR
+		IdempotencyKey: "key",
+	}
+
+	result, err := svc.Transfer(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "maximum transfer amount")
+}
+
+// ==================== Transfer Account Status Tests ====================
+
+func TestTransfer_SourceAccountFrozen(t *testing.T) {
+	svc, txnRepo, accountRepo, _, _ := setupTransactionServiceTest(t)
+	userID := uuid.New()
+	fromAccountID := uuid.New()
+	toAccountID := uuid.New()
+
+	req := &transaction.TransferRequest{
+		FromAccountID:  fromAccountID.String(),
+		ToAccountID:    toAccountID.String(),
+		Amount:         1000,
+		IdempotencyKey: "key",
+	}
+
+	txnRepo.On("GetByIdempotencyKey", req.IdempotencyKey).Return(nil, fmt.Errorf("not found"))
+
+	// Source account is frozen
+	accountRepo.On("GetByID", fromAccountID).Return(&domainAccount.Account{
+		ID:     fromAccountID,
+		UserID: userID,
+		Status: domainAccount.AccountStatusFrozen,
+	}, nil)
+
+	result, err := svc.Transfer(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "frozen")
+}
+
+func TestTransfer_DestinationAccountClosed(t *testing.T) {
+	svc, txnRepo, accountRepo, _, _ := setupTransactionServiceTest(t)
+	userID := uuid.New()
+	fromAccountID := uuid.New()
+	toAccountID := uuid.New()
+
+	req := &transaction.TransferRequest{
+		FromAccountID:  fromAccountID.String(),
+		ToAccountID:    toAccountID.String(),
+		Amount:         1000,
+		IdempotencyKey: "key",
+	}
+
+	txnRepo.On("GetByIdempotencyKey", req.IdempotencyKey).Return(nil, fmt.Errorf("not found"))
+
+	// Source account is active
+	accountRepo.On("GetByID", fromAccountID).Return(&domainAccount.Account{
+		ID:       fromAccountID,
+		UserID:   userID,
+		Currency: "IDR",
+		Status:   domainAccount.AccountStatusActive,
+	}, nil)
+
+	// Destination account is closed
+	accountRepo.On("GetByID", toAccountID).Return(&domainAccount.Account{
+		ID:       toAccountID,
+		UserID:   uuid.New(),
+		Currency: "IDR",
+		Status:   domainAccount.AccountStatusClosed,
+	}, nil)
+
+	result, err := svc.Transfer(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "closed")
+}
+
+func TestTransfer_SourceAccountNotFound(t *testing.T) {
+	svc, txnRepo, accountRepo, _, _ := setupTransactionServiceTest(t)
+	userID := uuid.New()
+	fromAccountID := uuid.New()
+	toAccountID := uuid.New()
+
+	req := &transaction.TransferRequest{
+		FromAccountID:  fromAccountID.String(),
+		ToAccountID:    toAccountID.String(),
+		Amount:         1000,
+		IdempotencyKey: "key",
+	}
+
+	txnRepo.On("GetByIdempotencyKey", req.IdempotencyKey).Return(nil, fmt.Errorf("not found"))
+	accountRepo.On("GetByID", fromAccountID).Return(nil, fmt.Errorf("not found"))
+
+	result, err := svc.Transfer(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "source account not found")
+}
+
+func TestTransfer_DestinationAccountNotFound(t *testing.T) {
+	svc, txnRepo, accountRepo, _, _ := setupTransactionServiceTest(t)
+	userID := uuid.New()
+	fromAccountID := uuid.New()
+	toAccountID := uuid.New()
+
+	req := &transaction.TransferRequest{
+		FromAccountID:  fromAccountID.String(),
+		ToAccountID:    toAccountID.String(),
+		Amount:         1000,
+		IdempotencyKey: "key",
+	}
+
+	txnRepo.On("GetByIdempotencyKey", req.IdempotencyKey).Return(nil, fmt.Errorf("not found"))
+
+	accountRepo.On("GetByID", fromAccountID).Return(&domainAccount.Account{
+		ID:       fromAccountID,
+		UserID:   userID,
+		Currency: "IDR",
+		Status:   domainAccount.AccountStatusActive,
+	}, nil)
+
+	accountRepo.On("GetByID", toAccountID).Return(nil, fmt.Errorf("not found"))
+
+	result, err := svc.Transfer(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "destination account not found")
+}
+
+// ==================== Withdrawal Amount Limits Tests ====================
+
+func TestWithdrawal_AmountBelowMinimum(t *testing.T) {
+	svc, _, _, _, _ := setupTransactionServiceTest(t)
+	userID := uuid.New()
+
+	req := &transaction.WithdrawalRequest{
+		AccountID:      uuid.New().String(),
+		Amount:         0.5, // Below minimum
+		IdempotencyKey: "key",
+	}
+
+	result, err := svc.Withdrawal(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "minimum withdrawal amount")
+}
+
+func TestWithdrawal_AmountAboveMaximum(t *testing.T) {
+	svc, _, _, _, _ := setupTransactionServiceTest(t)
+	userID := uuid.New()
+
+	req := &transaction.WithdrawalRequest{
+		AccountID:      uuid.New().String(),
+		Amount:         15_000_000, // Above maximum
+		IdempotencyKey: "key",
+	}
+
+	result, err := svc.Withdrawal(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "maximum withdrawal amount")
+}
+
+func TestWithdrawal_AccountFrozen(t *testing.T) {
+	svc, txnRepo, accountRepo, _, _ := setupTransactionServiceTest(t)
+	userID := uuid.New()
+	accountID := uuid.New()
+
+	req := &transaction.WithdrawalRequest{
+		AccountID:      accountID.String(),
+		Amount:         1000,
+		IdempotencyKey: "key",
+	}
+
+	txnRepo.On("GetByIdempotencyKey", req.IdempotencyKey).Return(nil, fmt.Errorf("not found"))
+
+	accountRepo.On("GetByID", accountID).Return(&domainAccount.Account{
+		ID:     accountID,
+		UserID: userID,
+		Status: domainAccount.AccountStatusFrozen,
+	}, nil)
+
+	result, err := svc.Withdrawal(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "frozen")
+}
+
+func TestWithdrawal_InvalidAccountID(t *testing.T) {
+	svc, _, _, _, _ := setupTransactionServiceTest(t)
+	userID := uuid.New()
+
+	req := &transaction.WithdrawalRequest{
+		AccountID:      "invalid-uuid",
+		Amount:         1000,
+		IdempotencyKey: "key",
+	}
+
+	result, err := svc.Withdrawal(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "invalid account_id")
+}
+
+func TestWithdrawal_Unauthorized(t *testing.T) {
+	svc, txnRepo, accountRepo, _, _ := setupTransactionServiceTest(t)
+	userID := uuid.New()
+	otherUserID := uuid.New()
+	accountID := uuid.New()
+
+	req := &transaction.WithdrawalRequest{
+		AccountID:      accountID.String(),
+		Amount:         1000,
+		IdempotencyKey: "key",
+	}
+
+	txnRepo.On("GetByIdempotencyKey", req.IdempotencyKey).Return(nil, fmt.Errorf("not found"))
+
+	// Account belongs to different user
+	accountRepo.On("GetByID", accountID).Return(&domainAccount.Account{
+		ID:     accountID,
+		UserID: otherUserID,
+		Status: domainAccount.AccountStatusActive,
+	}, nil)
+
+	result, err := svc.Withdrawal(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "unauthorized")
+}
+
+// ==================== Deposit Tests ====================
+
+func TestDeposit_InvalidAccountID(t *testing.T) {
+	svc, _, _, _, _ := setupTransactionServiceTest(t)
+	userID := uuid.New()
+
+	req := &transaction.DepositRequest{
+		AccountID:      "invalid-uuid",
+		Amount:         1000,
+		IdempotencyKey: "key",
+	}
+
+	result, err := svc.Deposit(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "invalid account_id")
+}
+
+func TestDeposit_AccountNotFound(t *testing.T) {
+	svc, txnRepo, accountRepo, _, _ := setupTransactionServiceTest(t)
+	userID := uuid.New()
+	accountID := uuid.New()
+
+	req := &transaction.DepositRequest{
+		AccountID:      accountID.String(),
+		Amount:         1000,
+		IdempotencyKey: "key",
+	}
+
+	txnRepo.On("GetByIdempotencyKey", req.IdempotencyKey).Return(nil, fmt.Errorf("not found"))
+	accountRepo.On("GetByID", accountID).Return(nil, fmt.Errorf("not found"))
+
+	result, err := svc.Deposit(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "account not found")
+}
+
+func TestDeposit_ExecuteFails(t *testing.T) {
+	svc, txnRepo, accountRepo, auditRepo, _ := setupTransactionServiceTest(t)
+	userID := uuid.New()
+	accountID := uuid.New()
+
+	req := &transaction.DepositRequest{
+		AccountID:      accountID.String(),
+		Amount:         1000,
+		IdempotencyKey: "key",
+	}
+
+	txnRepo.On("GetByIdempotencyKey", req.IdempotencyKey).Return(nil, fmt.Errorf("not found"))
+
+	accountRepo.On("GetByID", accountID).Return(&domainAccount.Account{
+		ID:       accountID,
+		UserID:   userID,
+		Currency: "IDR",
+	}, nil)
+
+	txnRepo.On("ExecuteDeposit", accountID, float64(1000), mock.AnythingOfType("*transaction.Transaction")).Return(fmt.Errorf("deposit failed"))
+	auditRepo.On("Create", mock.AnythingOfType("*audit.AuditLog")).Return(nil)
+
+	result, err := svc.Deposit(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+}
+
+// ==================== GetTransactionHistory Tests ====================
+
+func TestGetTransactionHistory_InvalidAccountID(t *testing.T) {
+	svc, _, _, _, _ := setupTransactionServiceTest(t)
+	userID := uuid.New()
+
+	req := &transaction.TransactionHistoryRequest{
+		AccountID: "invalid-uuid",
+	}
+
+	result, err := svc.GetTransactionHistory(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+}
+
+func TestGetTransactionHistory_Unauthorized(t *testing.T) {
+	svc, _, accountRepo, _, _ := setupTransactionServiceTest(t)
+	userID := uuid.New()
+	otherUserID := uuid.New()
+	accountID := uuid.New()
+
+	req := &transaction.TransactionHistoryRequest{
+		AccountID: accountID.String(),
+	}
+
+	accountRepo.On("GetByID", accountID).Return(&domainAccount.Account{
+		ID:     accountID,
+		UserID: otherUserID,
+	}, nil)
+
+	result, err := svc.GetTransactionHistory(userID, req)
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "unauthorized")
+}
+
+// ==================== GetTransaction Tests ====================
+
+func TestGetTransaction_NotFound(t *testing.T) {
+	svc, txnRepo, _, _, _ := setupTransactionServiceTest(t)
+	userID := uuid.New()
+	transactionID := uuid.New()
+
+	txnRepo.On("GetByID", transactionID).Return(nil, fmt.Errorf("not found"))
+
+	result, err := svc.GetTransaction(userID, transactionID)
+	assert.Error(t, err)
+	assert.Nil(t, result)
 }
