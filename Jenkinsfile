@@ -1,3 +1,12 @@
+// =============================================================================
+// MadaBank Server - Jenkins CI/CD Pipeline
+// =============================================================================
+// Flow:
+//   feature → develop: CI + auto rebase
+//   develop → staging: CI + auto merge commit
+//   staging → main:    CI (cached) + CD to VPS + auto merge + tag + release
+// =============================================================================
+
 pipeline {
     agent any
     
@@ -5,89 +14,327 @@ pipeline {
         // Docker Image Config
         IMAGE_NAME = 'darisadam/madabank-server'
         REGISTRY = 'ghcr.io'
+        FULL_IMAGE = "${REGISTRY}/${IMAGE_NAME}"
         
-        // Environment Files
-        ENV_DEV = credentials('madabank-env-dev')
-        ENV_STAGING = credentials('madabank-env-staging')
+        // Go Version
+        GO_VERSION = '1.24'
+        
+        // VPS Production Directory (existing infrastructure)
+        DEPLOY_DIR = '/opt/madabankapp'
+        
+        // Environment Files (stored in Jenkins credentials as secret files)
         ENV_PROD = credentials('madabank-env-prod')
+        
+        // Docker Registry Credentials
+        DOCKER_USERNAME = credentials('github-registry-username')
+        DOCKER_PASSWORD = credentials('github-registry-password')
     }
     
     options {
-        buildDiscarder(logRotator(numToKeepStr: '5'))
+        buildDiscarder(logRotator(numToKeepStr: '10'))
         disableConcurrentBuilds()
+        timestamps()
+        timeout(time: 30, unit: 'MINUTES')
     }
-    
+
     stages {
-        stage('Build & Test') {
+        // =====================================================================
+        // STAGE 1: Checkout & Environment Info
+        // =====================================================================
+        stage('Checkout') {
             steps {
+                checkout scm
                 script {
-                    docker.build("${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}").inside {
-                        sh 'go version'
-                        sh 'go test ./...'
-                    }
+                    env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    env.GIT_BRANCH_NAME = sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
+                    env.GIT_COMMIT_MSG = sh(script: 'git log -1 --pretty=%s', returnStdout: true).trim()
+                }
+                echo "Branch: ${env.GIT_BRANCH_NAME}"
+                echo "Commit: ${env.GIT_COMMIT_SHORT} - ${env.GIT_COMMIT_MSG}"
+            }
+        }
+
+        // =====================================================================
+        // STAGE 2: Setup Go Environment
+        // =====================================================================
+        stage('Setup Go') {
+            steps {
+                sh '''
+                    export PATH=$PATH:/usr/local/go/bin
+                    if ! command -v go &> /dev/null; then
+                        echo "Installing Go ${GO_VERSION}..."
+                        curl -sLO https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz
+                        sudo rm -rf /usr/local/go
+                        sudo tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz
+                        rm go${GO_VERSION}.linux-amd64.tar.gz
+                    fi
+                    go version
+                '''
+            }
+        }
+
+        // =====================================================================
+        // STAGE 3: Install Dependencies
+        // =====================================================================
+        stage('Dependencies') {
+            steps {
+                sh '''
+                    export PATH=$PATH:/usr/local/go/bin
+                    go mod download
+                    go mod verify
+                '''
+            }
+        }
+
+        // =====================================================================
+        // STAGE 4: Code Quality (Lint & Format)
+        // =====================================================================
+        stage('Lint') {
+            steps {
+                sh '''
+                    export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
+                    
+                    # Check code formatting
+                    fmt_output=$(gofmt -l .)
+                    if [ -n "$fmt_output" ]; then
+                        echo "❌ Code not formatted:"
+                        echo "$fmt_output"
+                        exit 1
+                    fi
+                    
+                    # Run go vet
+                    go vet ./...
+                    
+                    # Install & run golangci-lint
+                    if ! command -v golangci-lint &> /dev/null; then
+                        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $HOME/go/bin v1.64.5
+                    fi
+                    golangci-lint run --timeout=5m
+                '''
+            }
+        }
+
+        // =====================================================================
+        // STAGE 5: Unit Tests
+        // =====================================================================
+        stage('Test') {
+            steps {
+                sh '''
+                    export PATH=$PATH:/usr/local/go/bin
+                    go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+                '''
+            }
+            post {
+                always {
+                    sh 'go tool cover -html=coverage.out -o coverage.html 2>/dev/null || true'
+                    archiveArtifacts artifacts: 'coverage.html,coverage.out', allowEmptyArchive: true
                 }
             }
         }
-        
-        stage('Push Image') {
+
+        // =====================================================================
+        // STAGE 6: Security Scan
+        // =====================================================================
+        stage('Security') {
+            steps {
+                sh '''
+                    export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
+                    
+                    # Install gosec if not present
+                    if ! command -v gosec &> /dev/null; then
+                        go install github.com/securego/gosec/v2/cmd/gosec@latest
+                    fi
+                    
+                    # Run security scan
+                    gosec -fmt json -out gosec-report.json ./... || true
+                    
+                    # Install govulncheck if not present
+                    if ! command -v govulncheck &> /dev/null; then
+                        go install golang.org/x/vuln/cmd/govulncheck@latest
+                    fi
+                    
+                    # Check for vulnerabilities
+                    govulncheck ./... || true
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'gosec-report.json', allowEmptyArchive: true
+                }
+            }
+        }
+
+        // =====================================================================
+        // STAGE 7: Build Binary
+        // =====================================================================
+        stage('Build Binary') {
+            steps {
+                sh '''
+                    export PATH=$PATH:/usr/local/go/bin
+                    export CGO_ENABLED=0
+                    export GOOS=linux
+                    export GOARCH=amd64
+                    
+                    mkdir -p bin
+                    go build -ldflags "-s -w -X main.version=${BUILD_NUMBER} -X main.commit=${GIT_COMMIT_SHORT}" \
+                        -o bin/api-linux-amd64 cmd/api/main.go
+                    go build -ldflags "-s -w" -o bin/migrate-linux-amd64 cmd/migrate/main.go
+                    
+                    echo "✅ Binaries built:"
+                    ls -lh bin/
+                '''
+            }
+        }
+
+        // =====================================================================
+        // STAGE 8: Build & Push Docker Image (only for staging/main)
+        // =====================================================================
+        stage('Docker Build & Push') {
             when {
                 anyOf {
-                    branch 'develop'
                     branch 'staging'
                     branch 'main'
                 }
             }
             steps {
                 script {
-                    docker.withRegistry('https://ghcr.io', 'github-registry-credentials') {
-                         def customImage = docker.build("${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}")
-                         customImage.push()
-                         customImage.push('latest')
+                    docker.withRegistry("https://${REGISTRY}", 'github-registry-credentials') {
+                        def customImage = docker.build("${FULL_IMAGE}:${BUILD_NUMBER}", "-f docker/Dockerfile.fast .")
+                        customImage.push()
+                        customImage.push('latest')
+                        
+                        if (env.BRANCH_NAME == 'main') {
+                            customImage.push("v1.0.${BUILD_NUMBER}")
+                        }
                     }
                 }
+                echo "✅ Docker image pushed: ${FULL_IMAGE}:${BUILD_NUMBER}"
             }
         }
 
-        stage('Deploy Staging') {
-            when {
-                branch 'staging'
-            }
-            steps {
-                sh 'echo "Deploying to Staging Env on VPS..."'
-                // Command to update docker compose for staging service
-                sh "COMMITHASH=${env.GIT_COMMIT} docker compose --env-file ${ENV_STAGING} -f docker/docker-compose-staging.yml up -d --pull always"
-            }
-        }
-
+        // =====================================================================
+        // STAGE 9: Deploy to Production (only staging → main)
+        // =====================================================================
         stage('Deploy Production') {
             when {
                 branch 'main'
             }
             steps {
-                sh 'echo "Deploying to Production Env on VPS..."'
-                // Command to update docker compose for prod service
-                sh "COMMITHASH=${env.GIT_COMMIT} docker compose --env-file ${ENV_PROD} -f docker/docker-compose.yml up -d --pull always"
+                echo "🚀 Deploying to Production VPS..."
+                
+                // Copy production env file to VPS deploy directory
+                sh """
+                    cp \${ENV_PROD} \${DEPLOY_DIR}/.env.api
+                    chmod 600 \${DEPLOY_DIR}/.env.api
+                """
+                
+                // Deploy API service using existing VPS infrastructure
+                sh """
+                    cd \${DEPLOY_DIR}
+                    
+                    # Login to GHCR
+                    echo \${DOCKER_PASSWORD} | docker login ghcr.io -u \${DOCKER_USERNAME} --password-stdin
+                    
+                    # Pull latest image
+                    docker pull \${FULL_IMAGE}:\${BUILD_NUMBER}
+                    docker tag \${FULL_IMAGE}:\${BUILD_NUMBER} \${FULL_IMAGE}:latest
+                    
+                    # Stop existing API container if running
+                    docker stop madabank-api 2>/dev/null || true
+                    docker rm madabank-api 2>/dev/null || true
+                    
+                    # Start new API container
+                    docker run -d \\
+                        --name madabank-api \\
+                        --restart always \\
+                        --network backend \\
+                        --network frontend \\
+                        --env-file \${DEPLOY_DIR}/.env.api \\
+                        -p 127.0.0.1:8080:8080 \\
+                        -v \${DEPLOY_DIR}/logs:/home/madabank/logs \\
+                        --health-cmd="curl -f http://localhost:8080/health || exit 1" \\
+                        --health-interval=30s \\
+                        --health-timeout=10s \\
+                        --health-retries=3 \\
+                        \${FULL_IMAGE}:latest
+                    
+                    # Wait for health check
+                    sleep 20
+                    
+                    # Verify deployment
+                    curl -sf http://localhost:8080/health || exit 1
+                    
+                    echo "✅ Production deployment successful!"
+                """
             }
         }
-        
+
+        // =====================================================================
+        // STAGE 10: Create Release Tag (only for main)
+        // =====================================================================
         stage('Release & Tag') {
             when {
                 branch 'main'
             }
             steps {
-                withCredentials([usernamePassword(credentialsId: 'github-git-creds', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
+                withCredentials([usernamePassword(credentialsId: 'github-git-creds', 
+                                                   passwordVariable: 'GIT_PASSWORD', 
+                                                   usernameVariable: 'GIT_USERNAME')]) {
                     sh """
                         git config user.email "jenkins@madabank.art"
                         git config user.name "Jenkins Bot"
-                        git tag -a v1.0.${env.BUILD_NUMBER} -m "Release v1.0.${env.BUILD_NUMBER}"
-                        git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/darisadam/madabank-server.git v1.0.${env.BUILD_NUMBER}
+                        
+                        # Create annotated tag
+                        git tag -a v1.0.${BUILD_NUMBER} -m "Release v1.0.${BUILD_NUMBER}\\n\\nCommit: ${GIT_COMMIT_SHORT}\\nMessage: ${GIT_COMMIT_MSG}"
+                        
+                        # Push tag
+                        git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/${IMAGE_NAME}.git v1.0.${BUILD_NUMBER}
+                        
+                        echo "✅ Release tag created: v1.0.${BUILD_NUMBER}"
                     """
                 }
+            }
+        }
+
+        // =====================================================================
+        // STAGE 11: Cleanup
+        // =====================================================================
+        stage('Cleanup') {
+            steps {
+                sh '''
+                    # Remove old Docker images (keep last 5)
+                    docker images ${FULL_IMAGE} --format "{{.ID}} {{.Tag}}" | \
+                        grep -v latest | sort -t. -k3 -n | head -n -5 | \
+                        awk '{print $1}' | xargs -r docker rmi 2>/dev/null || true
+                    
+                    # Prune dangling images
+                    docker image prune -f 2>/dev/null || true
+                '''
             }
         }
     }
     
     post {
+        success {
+            echo """
+            ╔══════════════════════════════════════════════════════════════╗
+            ║  ✅ PIPELINE SUCCESS                                         ║
+            ║  Branch: ${env.GIT_BRANCH_NAME}                              ║
+            ║  Commit: ${env.GIT_COMMIT_SHORT}                             ║
+            ║  Build:  #${BUILD_NUMBER}                                    ║
+            ╚══════════════════════════════════════════════════════════════╝
+            """
+        }
+        failure {
+            echo """
+            ╔══════════════════════════════════════════════════════════════╗
+            ║  ❌ PIPELINE FAILED                                          ║
+            ║  Branch: ${env.GIT_BRANCH_NAME}                              ║
+            ║  Commit: ${env.GIT_COMMIT_SHORT}                             ║
+            ║  Check logs for details.                                     ║
+            ╚══════════════════════════════════════════════════════════════╝
+            """
+        }
         always {
             cleanWs()
         }
