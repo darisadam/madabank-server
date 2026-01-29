@@ -213,13 +213,7 @@ pipeline {
         // =====================================================================
         stage('Docker Build & Push') {
             when {
-                anyOf {
-                    branch 'staging'
-                    // Build on PRs targeting main (preparation for deployment)
-                    allOf {
-                         changeRequest target: 'main'
-                    }
-                }
+                branch 'staging'
             }
             steps {
                 script {
@@ -247,10 +241,7 @@ pipeline {
         // =====================================================================
         stage('Deploy Production') {
             when {
-                // RUNS ONLY ON PR targeting main
-                allOf {
-                    changeRequest target: 'main'
-                }
+                branch 'staging'
             }
             steps {
                 echo "🚀 Deploying to Production VPS (PR Preview/Release Candidate)..."
@@ -262,18 +253,18 @@ pipeline {
                                                        passwordVariable: 'DOCKER_PASSWORD', 
                                                        usernameVariable: 'DOCKER_USERNAME')]) {
                         // Deploy API service using docker compose
-                        sh """
-                            cd ${DEPLOY_DIR}
+                        env.IMAGE_TAG = imageTag
+                        sh '''
+                            cd $DEPLOY_DIR
                             
-                            # Login to GHCR
-                            echo ${DOCKER_PASSWORD} | docker login ghcr.io -u ${DOCKER_USERNAME} --password-stdin
+                            # Login to GHCR (Password via env var is safe)
+                            echo $DOCKER_PASSWORD | docker login ghcr.io -u $DOCKER_USERNAME --password-stdin
                             
                             # Pull the new image
-                            docker pull ${FULL_IMAGE}:${imageTag}
+                            docker pull $FULL_IMAGE:$IMAGE_TAG
                             
-                            # Retag as 'latest' locally on VPS so docker-compose uses it (assuming compose uses :latest or we update .env)
-                            # BETTER: Update the running service to use the specific tag or just force update if compose file uses :latest and we retag
-                            docker tag ${FULL_IMAGE}:${imageTag} ${FULL_IMAGE}:latest
+                            # Retag as 'latest' locally on VPS
+                            docker tag $FULL_IMAGE:$IMAGE_TAG $FULL_IMAGE:latest
                             
                             # Restart API service
                             docker compose stop api || true
@@ -286,8 +277,8 @@ pipeline {
                             # Verify deployment
                             curl -sf http://localhost:8080/health || exit 1
                             
-                            echo "✅ Production deployment successful for PR-${env.CHANGE_ID}!"
-                        """
+                            echo "✅ Production deployment successful for PR-${CHANGE_ID}!"
+                        '''
                     }
                 }
             }
