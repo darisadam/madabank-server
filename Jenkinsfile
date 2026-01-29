@@ -247,7 +247,8 @@ pipeline {
                 echo "🚀 Deploying to Production VPS (PR Preview/Release Candidate)..."
                 
                 script {
-                    def imageTag = "pr-${env.CHANGE_ID}"
+                    // Determine tag based on build type (must match Docker Build stage logic)
+                    def imageTag = env.CHANGE_ID ? "pr-${env.CHANGE_ID}" : "staging-${env.BUILD_NUMBER}"
                     
                     withCredentials([usernamePassword(credentialsId: 'github-git-creds', 
                                                        passwordVariable: 'DOCKER_PASSWORD', 
@@ -266,10 +267,15 @@ pipeline {
                             # Retag as 'latest' locally on VPS
                             docker tag $FULL_IMAGE:$IMAGE_TAG $FULL_IMAGE:latest
                             
-                            # Restart API service
-                            docker compose stop api || true
-                            docker compose rm -f api || true
-                            docker compose up -d api
+                            # Restart API service using a transient container with docker compose support
+                            # This avoids needing to mount CLI plugins from the host
+                            docker run --rm \\
+                                -v /var/run/docker.sock:/var/run/docker.sock \\
+                                -v "$DEPLOY_DIR:$DEPLOY_DIR" \\
+                                -v /var/jenkins_home/.docker/config.json:/root/.docker/config.json \\
+                                -w "$DEPLOY_DIR" \\
+                                docker:latest \\
+                                compose up -d --force-recreate api
                             
                             # Wait for health check
                             sleep 20
