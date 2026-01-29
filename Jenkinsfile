@@ -48,7 +48,8 @@ pipeline {
                     branches: scm.branches,
                     doGenerateSubmoduleConfigurations: false,
                     extensions: [
-                        [$class: 'CloneOption', depth: 1, noTags: false, reference: '', shallow: true, timeout: 20]
+                        [$class: 'CloneOption', depth: 1, noTags: false, reference: '', shallow: true, timeout: 60],
+                        [$class: 'WipeWorkspace']
                     ],
                     submoduleCfg: [],
                     userRemoteConfigs: scm.userRemoteConfigs
