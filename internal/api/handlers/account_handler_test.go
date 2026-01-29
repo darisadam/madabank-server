@@ -185,7 +185,8 @@ func TestAccountHandler_GetAccounts_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var response account.AccountListResponse
-	json.Unmarshal(w.Body.Bytes(), &response)
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
 	assert.Len(t, response.Accounts, 2)
 	mockService.AssertExpectations(t)
 }
