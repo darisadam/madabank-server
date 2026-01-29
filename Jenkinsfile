@@ -101,6 +101,8 @@ pipeline {
             steps {
                 sh '''
                     export PATH=$PATH:$HOME/go_dist/go/bin:$HOME/go/bin
+                    # Reduce memory usage (aggressive GC)
+                    export GOGC=20
                     
                     # Check code formatting
                     fmt_output=$(gofmt -l .)
@@ -117,7 +119,7 @@ pipeline {
                     if ! command -v golangci-lint &> /dev/null; then
                         curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $HOME/go/bin v1.64.5
                     fi
-                    golangci-lint run --timeout=5m
+                    golangci-lint run --timeout=5m --concurrency=2
                 '''
             }
         }
