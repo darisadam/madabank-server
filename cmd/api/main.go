@@ -119,7 +119,7 @@ func main() {
 
 	// Initialize services
 	securityService := service.NewSecurityService()
-	userService := service.NewUserService(userRepo, jwtService, redisClient)
+	userService := service.NewUserService(userRepo, accountRepo, cardRepo, jwtService, redisClient, encryptor)
 	accountService := service.NewAccountService(accountRepo)
 	transactionService := service.NewTransactionService(transactionRepo, accountRepo, auditRepo, userRepo)
 	cardService := service.NewCardService(cardRepo, accountRepo, userRepo, encryptor)

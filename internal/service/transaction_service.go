@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/darisadam/madabank-server/internal/domain/account"
 	"github.com/darisadam/madabank-server/internal/domain/audit"
 	"github.com/darisadam/madabank-server/internal/domain/transaction"
 	"github.com/darisadam/madabank-server/internal/pkg/logger"
@@ -11,6 +12,15 @@ import (
 	"github.com/darisadam/madabank-server/internal/repository"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+)
+
+// Transaction amount limits (IDR)
+const (
+	MinTransferAmount   = 1          // Minimum 1 IDR
+	MaxTransferAmount   = 10_000_000 // Maximum 10 million IDR per transaction
+	MinWithdrawalAmount = 1
+	MaxWithdrawalAmount = 10_000_000
+	DefaultCurrency     = "IDR"
 )
 
 type TransactionService interface {
@@ -46,6 +56,16 @@ func NewTransactionService(
 func (s *transactionService) Transfer(userID uuid.UUID, req *transaction.TransferRequest) (*transaction.Transaction, error) {
 	start := time.Now()
 
+	// Validate transfer amount limits
+	if req.Amount < MinTransferAmount {
+		metrics.RecordTransactionError("transfer", "amount_below_minimum")
+		return nil, fmt.Errorf("minimum transfer amount is %d IDR", MinTransferAmount)
+	}
+	if req.Amount > MaxTransferAmount {
+		metrics.RecordTransactionError("transfer", "amount_above_maximum")
+		return nil, fmt.Errorf("maximum transfer amount is %d IDR per transaction", MaxTransferAmount)
+	}
+
 	// Parse UUIDs
 	fromAccountID, err := uuid.Parse(req.FromAccountID)
 	if err != nil {
@@ -70,7 +90,7 @@ func (s *transactionService) Transfer(userID uuid.UUID, req *transaction.Transfe
 	if err == nil {
 		// Transaction already exists - record as successful (idempotency worked)
 		duration := time.Since(start).Seconds()
-		metrics.RecordTransaction("transfer", "completed", req.Amount, "USD", duration)
+		metrics.RecordTransaction("transfer", "completed", req.Amount, DefaultCurrency, duration)
 		return existing, nil
 	}
 
@@ -85,11 +105,23 @@ func (s *transactionService) Transfer(userID uuid.UUID, req *transaction.Transfe
 		return nil, fmt.Errorf("unauthorized: source account does not belong to user")
 	}
 
+	// Check source account is active
+	if fromAccount.Status != account.AccountStatusActive {
+		metrics.RecordTransactionError("transfer", "source_not_active")
+		return nil, fmt.Errorf("source account is %s, cannot perform transactions", fromAccount.Status)
+	}
+
 	// Verify destination account exists and is active
 	toAccount, err := s.accountRepo.GetByID(toAccountID)
 	if err != nil {
 		metrics.RecordTransactionError("transfer", "destination_not_found")
 		return nil, fmt.Errorf("destination account not found")
+	}
+
+	// Check destination account is active
+	if toAccount.Status != account.AccountStatusActive {
+		metrics.RecordTransactionError("transfer", "destination_not_active")
+		return nil, fmt.Errorf("destination account is %s, cannot receive transfers", toAccount.Status)
 	}
 
 	// Validate currency match
@@ -253,6 +285,16 @@ func (s *transactionService) Deposit(userID uuid.UUID, req *transaction.DepositR
 func (s *transactionService) Withdrawal(userID uuid.UUID, req *transaction.WithdrawalRequest) (*transaction.Transaction, error) {
 	start := time.Now()
 
+	// Validate withdrawal amount limits
+	if req.Amount < MinWithdrawalAmount {
+		metrics.RecordTransactionError("withdrawal", "amount_below_minimum")
+		return nil, fmt.Errorf("minimum withdrawal amount is %d IDR", MinWithdrawalAmount)
+	}
+	if req.Amount > MaxWithdrawalAmount {
+		metrics.RecordTransactionError("withdrawal", "amount_above_maximum")
+		return nil, fmt.Errorf("maximum withdrawal amount is %d IDR per transaction", MaxWithdrawalAmount)
+	}
+
 	accountID, err := uuid.Parse(req.AccountID)
 	if err != nil {
 		metrics.RecordTransactionError("withdrawal", "invalid_account")
@@ -263,19 +305,25 @@ func (s *transactionService) Withdrawal(userID uuid.UUID, req *transaction.Withd
 	existing, err := s.transactionRepo.GetByIdempotencyKey(req.IdempotencyKey)
 	if err == nil {
 		duration := time.Since(start).Seconds()
-		metrics.RecordTransaction("withdrawal", "completed", req.Amount, "USD", duration)
+		metrics.RecordTransaction("withdrawal", "completed", req.Amount, DefaultCurrency, duration)
 		return existing, nil
 	}
 
 	// Verify account ownership
-	account, err := s.accountRepo.GetByID(accountID)
+	acct, err := s.accountRepo.GetByID(accountID)
 	if err != nil {
 		metrics.RecordTransactionError("withdrawal", "account_not_found")
 		return nil, fmt.Errorf("account not found")
 	}
-	if account.UserID != userID {
+	if acct.UserID != userID {
 		metrics.RecordTransactionError("withdrawal", "unauthorized")
 		return nil, fmt.Errorf("unauthorized: account does not belong to user")
+	}
+
+	// Check account is active
+	if acct.Status != account.AccountStatusActive {
+		metrics.RecordTransactionError("withdrawal", "account_not_active")
+		return nil, fmt.Errorf("account is %s, cannot perform withdrawals", acct.Status)
 	}
 
 	// Create transaction
@@ -289,7 +337,7 @@ func (s *transactionService) Withdrawal(userID uuid.UUID, req *transaction.Withd
 		Description:     req.Description,
 		Metadata: map[string]interface{}{
 			"initiated_by": userID.String(),
-			"currency":     account.Currency,
+			"currency":     acct.Currency,
 		},
 	}
 
@@ -297,7 +345,7 @@ func (s *transactionService) Withdrawal(userID uuid.UUID, req *transaction.Withd
 	err = s.transactionRepo.ExecuteWithdrawal(accountID, req.Amount, txn)
 	if err != nil {
 		duration := time.Since(start).Seconds()
-		metrics.RecordTransaction("withdrawal", "failed", req.Amount, account.Currency, duration)
+		metrics.RecordTransaction("withdrawal", "failed", req.Amount, acct.Currency, duration)
 		metrics.RecordTransactionError("withdrawal", "execution_failed")
 
 		if errAudit := s.auditRepo.Create(&audit.AuditLog{
@@ -317,7 +365,7 @@ func (s *transactionService) Withdrawal(userID uuid.UUID, req *transaction.Withd
 	}
 
 	duration := time.Since(start).Seconds()
-	metrics.RecordTransaction("withdrawal", "completed", req.Amount, account.Currency, duration)
+	metrics.RecordTransaction("withdrawal", "completed", req.Amount, acct.Currency, duration)
 
 	if err := s.auditRepo.Create(&audit.AuditLog{
 		EventID:  uuid.New(),

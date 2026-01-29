@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	domainAccount "github.com/darisadam/madabank-server/internal/domain/account"
+	"github.com/darisadam/madabank-server/internal/domain/card"
 	"github.com/darisadam/madabank-server/internal/domain/user"
 	"github.com/darisadam/madabank-server/internal/pkg/crypto"
 	"github.com/darisadam/madabank-server/internal/pkg/jwt"
@@ -29,15 +31,28 @@ type UserService interface {
 
 type userService struct {
 	userRepo    repository.UserRepository
+	accountRepo repository.AccountRepository
+	cardRepo    repository.CardRepository
 	jwtService  *jwt.JWTService
 	redisClient *redis.Client
+	encryptor   *crypto.Encryptor
 }
 
-func NewUserService(userRepo repository.UserRepository, jwtService *jwt.JWTService, redisClient *redis.Client) UserService {
+func NewUserService(
+	userRepo repository.UserRepository,
+	accountRepo repository.AccountRepository,
+	cardRepo repository.CardRepository,
+	jwtService *jwt.JWTService,
+	redisClient *redis.Client,
+	encryptor *crypto.Encryptor,
+) UserService {
 	return &userService{
 		userRepo:    userRepo,
+		accountRepo: accountRepo,
+		cardRepo:    cardRepo,
 		jwtService:  jwtService,
 		redisClient: redisClient,
+		encryptor:   encryptor,
 	}
 }
 
@@ -81,18 +96,128 @@ func (s *userService) Register(req *user.CreateUserRequest) (*user.User, error) 
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
+	// AUTO-ONBOARDING: Create first checking account
+	if err := s.createFirstAccountAndCard(newUser); err != nil {
+		// Log error but don't fail registration - user can create account manually
+		logger.Error("Failed to auto-create first account/card during registration",
+			zap.String("user_id", newUser.ID.String()),
+			zap.Error(err),
+		)
+	}
+
 	// Remove sensitive data before returning
 	newUser.PasswordHash = ""
 
 	return newUser, nil
 }
 
-func (s *userService) Login(req *user.LoginRequest) (*user.LoginResponse, error) {
-	// Get user by email
-	u, err := s.userRepo.GetByEmail(req.Email)
+// createFirstAccountAndCard creates the initial checking account and debit card for a new user
+func (s *userService) createFirstAccountAndCard(newUser *user.User) error {
+	// Generate unique account number
+	accountNumber, err := s.accountRepo.GenerateAccountNumber()
 	if err != nil {
+		return fmt.Errorf("failed to generate account number: %w", err)
+	}
+
+	// Create first checking account (IDR currency)
+	firstAccount := &domainAccount.Account{
+		ID:            uuid.New(),
+		UserID:        newUser.ID,
+		AccountNumber: accountNumber,
+		AccountType:   domainAccount.AccountTypeChecking,
+		Balance:       0.00,
+		Currency:      "IDR", // Indonesian Rupiah - default currency
+		InterestRate:  0,
+		Status:        domainAccount.AccountStatusActive,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+
+	if err := s.accountRepo.Create(firstAccount); err != nil {
+		return fmt.Errorf("failed to create first account: %w", err)
+	}
+
+	logger.Info("Auto-created first checking account",
+		zap.String("user_id", newUser.ID.String()),
+		zap.String("account_id", firstAccount.ID.String()),
+		zap.String("account_number", firstAccount.AccountNumber),
+	)
+
+	// Generate card number and CVV
+	cardNumber, err := s.cardRepo.GenerateCardNumber()
+	if err != nil {
+		return fmt.Errorf("failed to generate card number: %w", err)
+	}
+
+	cvv := s.cardRepo.GenerateCVV()
+
+	// Encrypt sensitive data
+	encryptedCardNumber, err := s.encryptor.Encrypt(cardNumber)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt card number: %w", err)
+	}
+
+	encryptedCVV, err := s.encryptor.Encrypt(cvv)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt CVV: %w", err)
+	}
+
+	// Set expiry date (3 years from now)
+	now := time.Now()
+	expiryDate := now.AddDate(3, 0, 0)
+
+	// Create debit card for the account
+	cardHolderName := fmt.Sprintf("%s %s", newUser.FirstName, newUser.LastName)
+	newCard := &card.Card{
+		ID:                  uuid.New(),
+		AccountID:           firstAccount.ID,
+		CardNumberEncrypted: encryptedCardNumber,
+		CVVEncrypted:        encryptedCVV,
+		CardHolderName:      cardHolderName,
+		CardType:            card.CardTypeDebit,
+		ExpiryMonth:         int(expiryDate.Month()),
+		ExpiryYear:          expiryDate.Year(),
+		Status:              card.CardStatusActive,
+		DailyLimit:          10_000_000, // 10 million IDR daily limit
+		CreatedAt:           now,
+	}
+
+	if err := s.cardRepo.Create(newCard); err != nil {
+		return fmt.Errorf("failed to create debit card: %w", err)
+	}
+
+	logger.Info("Auto-created first debit card",
+		zap.String("user_id", newUser.ID.String()),
+		zap.String("card_id", newCard.ID.String()),
+	)
+
+	return nil
+}
+
+func (s *userService) Login(req *user.LoginRequest) (*user.LoginResponse, error) {
+	var u *user.User
+	var err error
+
+	// Validate that either email or phone is provided
+	if req.Email == "" && req.Phone == "" {
 		metrics.RecordAuthAttempt(false)
-		return nil, fmt.Errorf("invalid email or password")
+		return nil, fmt.Errorf("email or phone number is required")
+	}
+
+	// Get user by email or phone
+	if req.Email != "" {
+		u, err = s.userRepo.GetByEmail(req.Email)
+		if err != nil {
+			metrics.RecordAuthAttempt(false)
+			return nil, fmt.Errorf("invalid email or password")
+		}
+	} else {
+		// Login by phone number
+		u, err = s.userRepo.GetByPhone(req.Phone)
+		if err != nil {
+			metrics.RecordAuthAttempt(false)
+			return nil, fmt.Errorf("invalid phone number or password")
+		}
 	}
 
 	// Check if user is active
@@ -104,7 +229,10 @@ func (s *userService) Login(req *user.LoginRequest) (*user.LoginResponse, error)
 	// Verify password
 	if !crypto.CheckPassword(req.Password, u.PasswordHash) {
 		metrics.RecordAuthAttempt(false)
-		return nil, fmt.Errorf("invalid email or password")
+		if req.Email != "" {
+			return nil, fmt.Errorf("invalid email or password")
+		}
+		return nil, fmt.Errorf("invalid phone number or password")
 	}
 
 	// Generate JWT token

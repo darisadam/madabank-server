@@ -13,6 +13,7 @@ type UserRepository interface {
 	Create(user *user.User) error
 	GetByID(id uuid.UUID) (*user.User, error)
 	GetByEmail(email string) (*user.User, error)
+	GetByPhone(phone string) (*user.User, error)
 	Update(id uuid.UUID, updates map[string]interface{}) error
 	Delete(id uuid.UUID) error
 	List(limit, offset int) ([]*user.User, error)
@@ -102,6 +103,40 @@ func (r *userRepository) GetByEmail(email string) (*user.User, error) {
 
 	u := &user.User{}
 	err := r.db.QueryRow(query, email).Scan(
+		&u.ID,
+		&u.Email,
+		&u.PasswordHash,
+		&u.FirstName,
+		&u.LastName,
+		&u.Phone,
+		&u.DateOfBirth,
+		&u.KYCStatus,
+		&u.IsActive,
+		&u.CreatedAt,
+		&u.UpdatedAt,
+		&u.DeletedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("user not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+
+	return u, nil
+}
+
+func (r *userRepository) GetByPhone(phone string) (*user.User, error) {
+	query := `
+		SELECT id, email, password_hash, first_name, last_name, phone, date_of_birth,
+		       kyc_status, is_active, created_at, updated_at, deleted_at
+		FROM users
+		WHERE phone = $1 AND deleted_at IS NULL
+	`
+
+	u := &user.User{}
+	err := r.db.QueryRow(query, phone).Scan(
 		&u.ID,
 		&u.Email,
 		&u.PasswordHash,

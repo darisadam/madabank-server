@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: madabank-postgres-staging
+    env_file:
+      - .env
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data_staging:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U madabank"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - madabank-network-staging
+
+  redis:
+    image: redis:7-alpine
+    container_name: madabank-redis-staging
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data_staging:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - madabank-network-staging
+
+  api:
+    image: ghcr.io/darisadam/madabank-server:latest
+    container_name: madabank-api-staging
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgres://madabank:dev_password_change_in_prod@postgres:5432/madabank?sslmode=disable # Override if needed, but preferable via .env
+      - REDIS_URL=redis:6379
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - madabank-network-staging
+
+  # Monitoring (Optional for Staging - omitted to save resources, or run on different ports)
+
+volumes:
+  postgres_data_staging:
+  redis_data_staging:
+
+networks:
+  madabank-network-staging:
+    driver: bridge
