@@ -16,7 +16,10 @@ services:
     restart: always
     # Use Jenkins default UID (1000) with docker group GID from host
     # To find docker GID: stat -c '%g' /var/run/docker.sock
-    user: "1000:${DOCKER_GID:-998}"
+    user: "1000:${DOCKER_GID:-999}"
+    # Ensure jenkins user is added to the docker group
+    group_add:
+      - "${DOCKER_GID:-999}"
     ports:
       - "127.0.0.1:8080:8080"   # Bind to localhost only (Nginx handles external)
       - "127.0.0.1:50000:50000" # Jenkins Agent Port
