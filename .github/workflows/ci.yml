@@ -70,6 +70,23 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build Binaries for Docker
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p bin
+          go build -ldflags "-s -w" -o bin/api-linux-amd64 cmd/api/main.go
+          go build -ldflags "-s -w" -o bin/migrate-linux-amd64 cmd/migrate/main.go
+
       - name: Build Docker Image (Dry Run)
         run: docker build -f docker/Dockerfile.fast .
 
