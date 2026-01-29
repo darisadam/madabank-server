@@ -22,12 +22,12 @@ pipeline {
         // VPS Production Directory (existing infrastructure)
         DEPLOY_DIR = '/opt/madabankapp'
         
-        // Environment Files (stored in Jenkins credentials as secret files)
-        ENV_PROD = credentials('madabank-env-prod')
+        // Environment Files (Removed: unused)
+        // ENV_PROD = credentials('madabank-env-prod')
         
-        // Docker Registry Credentials
-        DOCKER_USERNAME = credentials('github-registry-username')
-        DOCKER_PASSWORD = credentials('github-registry-password')
+        // Docker Registry Credentials (Removed: reusing github-git-creds)
+        // DOCKER_USERNAME = credentials('github-registry-username')
+        // DOCKER_PASSWORD = credentials('github-registry-password')
     }
     
     options {
@@ -187,76 +187,92 @@ pipeline {
         }
 
         // =====================================================================
-        // STAGE 8: Build & Push Docker Image (only for staging/main)
+        // STAGE 8: Build & Push Docker Image
         // =====================================================================
         stage('Docker Build & Push') {
             when {
                 anyOf {
                     branch 'staging'
-                    branch 'main'
+                    // Build on PRs targeting main (preparation for deployment)
+                    allOf {
+                         changeRequest target: 'main'
+                    }
                 }
             }
             steps {
                 script {
-                    docker.withRegistry("https://${REGISTRY}", 'github-registry-credentials') {
-                        def customImage = docker.build("${FULL_IMAGE}:${BUILD_NUMBER}", "-f docker/Dockerfile.fast .")
-                        customImage.push()
-                        customImage.push('latest')
+                    // Use 'github-git-creds' for GHCR as well (same user/PAT)
+                    docker.withRegistry("https://${REGISTRY}", 'github-git-creds') {
+                        // For PRs, use the PR number or commit hash as tag
+                        def tag = env.CHANGE_ID ? "pr-${env.CHANGE_ID}" : "staging-${BUILD_NUMBER}"
                         
-                        if (env.BRANCH_NAME == 'main') {
-                            customImage.push("v1.0.${BUILD_NUMBER}")
+                        def customImage = docker.build("${FULL_IMAGE}:${tag}", "-f docker/Dockerfile.fast .")
+                        customImage.push()
+                        
+                        // Also push as 'latest-staging' or 'latest-pr' for easy reference if needed
+                        if (env.BRANCH_NAME == 'staging') {
+                            customImage.push('staging-latest')
                         }
                     }
                 }
-                echo "✅ Docker image pushed: ${FULL_IMAGE}:${BUILD_NUMBER}"
+                echo "✅ Docker image pushed."
             }
         }
 
         // =====================================================================
-        // STAGE 9: Deploy to Production (only staging → main)
+        // STAGE 9: Deploy to Production (PR Staging -> Main)
         // =====================================================================
         stage('Deploy Production') {
             when {
-                branch 'main'
+                // RUNS ONLY ON PR targeting main
+                allOf {
+                    changeRequest target: 'main'
+                }
             }
             steps {
-                echo "🚀 Deploying to Production VPS..."
+                echo "🚀 Deploying to Production VPS (PR Preview/Release Candidate)..."
                 
-                // Deploy API service using docker compose
-                sh """
-                    cd \${DEPLOY_DIR}
+                script {
+                    def imageTag = "pr-${env.CHANGE_ID}"
                     
-                    # Login to GHCR
-                    echo \${DOCKER_PASSWORD} | docker login ghcr.io -u \${DOCKER_USERNAME} --password-stdin
-                    
-                    # Pull the new image
-                    docker pull \${FULL_IMAGE}:\${BUILD_NUMBER}
-                    docker tag \${FULL_IMAGE}:\${BUILD_NUMBER} \${FULL_IMAGE}:latest
-                    
-                    # Restart only the API service (other services stay running)
-                    docker compose stop api || true
-                    docker compose rm -f api || true
-                    docker compose up -d api
-                    
-                    # Wait for health check
-                    sleep 20
-                    
-                    # Verify deployment
-                    curl -sf http://localhost:8080/health || exit 1
-                    
-                    # Cleanup old images (keep last 3)
-                    docker images \${FULL_IMAGE} --format "{{.ID}} {{.Tag}}" | \\
-                        grep -v latest | sort -t. -k3 -n | head -n -3 | \\
-                        awk '{print \$1}' | xargs -r docker rmi 2>/dev/null || true
-                    
-                    echo "✅ Production deployment successful!"
-                """
+                    withCredentials([usernamePassword(credentialsId: 'github-git-creds', 
+                                                       passwordVariable: 'DOCKER_PASSWORD', 
+                                                       usernameVariable: 'DOCKER_USERNAME')]) {
+                        // Deploy API service using docker compose
+                        sh """
+                            cd ${DEPLOY_DIR}
+                            
+                            # Login to GHCR
+                            echo ${DOCKER_PASSWORD} | docker login ghcr.io -u ${DOCKER_USERNAME} --password-stdin
+                            
+                            # Pull the new image
+                            docker pull ${FULL_IMAGE}:${imageTag}
+                            
+                            # Retag as 'latest' locally on VPS so docker-compose uses it (assuming compose uses :latest or we update .env)
+                            # BETTER: Update the running service to use the specific tag or just force update if compose file uses :latest and we retag
+                            docker tag ${FULL_IMAGE}:${imageTag} ${FULL_IMAGE}:latest
+                            
+                            # Restart API service
+                            docker compose stop api || true
+                            docker compose rm -f api || true
+                            docker compose up -d api
+                            
+                            # Wait for health check
+                            sleep 20
+                            
+                            # Verify deployment
+                            curl -sf http://localhost:8080/health || exit 1
+                            
+                            echo "✅ Production deployment successful for PR-${env.CHANGE_ID}!"
+                        """
+                    }
+                }
             }
         }
 
 
         // =====================================================================
-        // STAGE 10: Create Release Tag (only for main)
+        // STAGE 10: Create Release Tag (only after merge to main)
         // =====================================================================
         stage('Release & Tag') {
             when {
@@ -271,7 +287,7 @@ pipeline {
                         git config user.name "Jenkins Bot"
                         
                         # Create annotated tag
-                        git tag -a v1.0.${BUILD_NUMBER} -m "Release v1.0.${BUILD_NUMBER}\\n\\nCommit: ${GIT_COMMIT_SHORT}\\nMessage: ${GIT_COMMIT_MSG}"
+                        git tag -a v1.0.${BUILD_NUMBER} -m "Release v1.0.${BUILD_NUMBER}\\nCommit: ${GIT_COMMIT_SHORT}"
                         
                         # Push tag
                         git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/${IMAGE_NAME}.git v1.0.${BUILD_NUMBER}
@@ -322,7 +338,13 @@ pipeline {
             """
         }
         always {
-            cleanWs()
+            script {
+                try {
+                    cleanWs()
+                } catch (e) {
+                    echo "Warning: Failed to clean workspace: ${e}"
+                }
+            }
         }
     }
 }
