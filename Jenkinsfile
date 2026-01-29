@@ -222,41 +222,21 @@ pipeline {
             steps {
                 echo "🚀 Deploying to Production VPS..."
                 
-                // Copy production env file to VPS deploy directory
-                sh """
-                    cp \${ENV_PROD} \${DEPLOY_DIR}/.env.api
-                    chmod 600 \${DEPLOY_DIR}/.env.api
-                """
-                
-                // Deploy API service using existing VPS infrastructure
+                // Deploy API service using docker compose
                 sh """
                     cd \${DEPLOY_DIR}
                     
                     # Login to GHCR
                     echo \${DOCKER_PASSWORD} | docker login ghcr.io -u \${DOCKER_USERNAME} --password-stdin
                     
-                    # Pull latest image
+                    # Pull the new image
                     docker pull \${FULL_IMAGE}:\${BUILD_NUMBER}
                     docker tag \${FULL_IMAGE}:\${BUILD_NUMBER} \${FULL_IMAGE}:latest
                     
-                    # Stop existing API container if running
-                    docker stop madabank-api 2>/dev/null || true
-                    docker rm madabank-api 2>/dev/null || true
-                    
-                    # Start new API container
-                    docker run -d \\
-                        --name madabank-api \\
-                        --restart always \\
-                        --network backend \\
-                        --network frontend \\
-                        --env-file \${DEPLOY_DIR}/.env.api \\
-                        -p 127.0.0.1:8080:8080 \\
-                        -v \${DEPLOY_DIR}/logs:/home/madabank/logs \\
-                        --health-cmd="curl -f http://localhost:8080/health || exit 1" \\
-                        --health-interval=30s \\
-                        --health-timeout=10s \\
-                        --health-retries=3 \\
-                        \${FULL_IMAGE}:latest
+                    # Restart only the API service (other services stay running)
+                    docker compose stop api || true
+                    docker compose rm -f api || true
+                    docker compose up -d api
                     
                     # Wait for health check
                     sleep 20
@@ -264,10 +244,16 @@ pipeline {
                     # Verify deployment
                     curl -sf http://localhost:8080/health || exit 1
                     
+                    # Cleanup old images (keep last 3)
+                    docker images \${FULL_IMAGE} --format "{{.ID}} {{.Tag}}" | \\
+                        grep -v latest | sort -t. -k3 -n | head -n -3 | \\
+                        awk '{print \$1}' | xargs -r docker rmi 2>/dev/null || true
+                    
                     echo "✅ Production deployment successful!"
                 """
             }
         }
+
 
         // =====================================================================
         // STAGE 10: Create Release Tag (only for main)
