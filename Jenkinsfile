@@ -227,7 +227,8 @@ pipeline {
                         // For PRs, use the PR number or commit hash as tag
                         def tag = env.CHANGE_ID ? "pr-${env.CHANGE_ID}" : "staging-${BUILD_NUMBER}"
                         
-                        def customImage = docker.build("${FULL_IMAGE}:${tag}", "-f docker/Dockerfile.fast .")
+                        // Pass build args for OS/Arch
+                        def customImage = docker.build("${FULL_IMAGE}:${tag}", "--build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 -f docker/Dockerfile.fast .")
                         customImage.push()
                         
                         // Also push as 'latest-staging' or 'latest-pr' for easy reference if needed
