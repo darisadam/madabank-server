@@ -43,7 +43,16 @@ pipeline {
         // =====================================================================
         stage('Checkout') {
             steps {
-                checkout scm
+                checkout([
+                    $class: 'GitSCM',
+                    branches: scm.branches,
+                    doGenerateSubmoduleConfigurations: false,
+                    extensions: [
+                        [$class: 'CloneOption', depth: 1, noTags: false, reference: '', shallow: true, timeout: 20]
+                    ],
+                    submoduleCfg: [],
+                    userRemoteConfigs: scm.userRemoteConfigs
+                ])
                 script {
                     env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                     env.GIT_BRANCH_NAME = sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
@@ -353,7 +362,8 @@ pipeline {
                 try {
                     cleanWs()
                 } catch (e) {
-                    echo "Warning: Failed to clean workspace: ${e}"
+                    echo "Warning: Failed to clean workspace (likely early pipeline failure): ${e.getMessage()}"
+                    // e.printStackTrace() // Suppress stack trace to reduce noise
                 }
             }
         }
