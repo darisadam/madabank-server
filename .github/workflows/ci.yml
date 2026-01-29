@@ -239,7 +239,7 @@ jobs:
           # Docker buildx will only execute COPY for the target platform.
 
       - name: Build Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./docker/Dockerfile.fast
