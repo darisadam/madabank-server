@@ -88,8 +88,10 @@ func TestCheckLimitWithInfo_Returns_Correct_Info(t *testing.T) {
 	assert.Equal(t, 5, info.Remaining) // First request, so remaining = limit
 
 	// Make more requests
-	rl.CheckLimitWithInfo(ctx, key, config)
-	rl.CheckLimitWithInfo(ctx, key, config)
+	_, err = rl.CheckLimitWithInfo(ctx, key, config)
+	assert.NoError(t, err)
+	_, err = rl.CheckLimitWithInfo(ctx, key, config)
+	assert.NoError(t, err)
 
 	info, err = rl.CheckLimitWithInfo(ctx, key, config)
 	assert.NoError(t, err)

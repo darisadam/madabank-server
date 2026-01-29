@@ -173,7 +173,8 @@ func TestUserHandler_Login_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var response user.LoginResponse
-	json.Unmarshal(w.Body.Bytes(), &response)
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
 	assert.NotEmpty(t, response.Token)
 	mockService.AssertExpectations(t)
 }
