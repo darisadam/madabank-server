@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: madabank-config
+  namespace: madabank
+data:
+  ENV: "production"
+  PORT: "8080"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: madabank-secrets
+  namespace: madabank
+type: Opaque
+stringData:
+  # Replace these with actual values in production or use SealedSecrets / ExternalSecrets
+  DATABASE_URL: "postgres://user:password@endpoint:5432/dbname"
+  REDIS_URL: "redis:6379"
+  JWT_SECRET: "change-me"
+  ENCRYPTION_KEY: "change-me"

@@ -1,74 +1,71 @@
 # 🚀 Deployment Guide
 
-This guide details the deployment strategy for MadaBank, covering both Automated CI/CD pipelines and Manual Infrastructure provisioning.
+This guide details the **Hybrid Deployment Strategy** for MadaBank, combining the cost-effectiveness of a Private VPS for Production with the scalability of AWS for Development/Staging.
 
 ## 🌍 Environments
 
-| Environment | URL | Branch | Infrastructure |
-|-------------|-----|--------|----------------|
-| **Development** | `api-dev.madabank.art` | `develop` | T3.micro / Single AZ |
-| **Staging** | `api-staging.madabank.art` | `staging` | T3.micro / Single AZ |
-| **Production** | `api.madabank.art` | `main` | Production Grade / Multi-AZ Capable |
+| Environment | URL | Branch | Infrastructure | Orchestrator |
+|-------------|-----|--------|----------------|--------------|
+| **Development** | `api-dev.madabank.art` | `develop` | AWS (T3.micro) | ECS Fargate |
+| **Staging** | `api-staging.madabank.art` | `staging` | AWS (T3.micro) | ECS Fargate |
+| **Production** | `api.madabank.art` | `main` | Private VPS (Ubuntu 24) | Docker Compose + Jenkins |
 
 ---
 
-## 🤖 CI/CD Pipelines (GitHub Actions)
+## 🤖 CI/CD Strategy
 
-We use a "GitOps-lite" approach where pushing to specific branches triggers deployments.
+We use a "GitOps-Hybrid" approach:
 
-### 1. Development Deployment
-*   **Trigger**: Push to `develop`.
-*   **Action**: Builds Docker image, pushes to GHCR, updates ECS Service `madabank-dev`.
+### 1. GitHub Actions (CI & Dev/Staging CD)
+GitHub Actions handles the Continuous Integration (CI) for all branches and the Continuous Deployment (CD) for AWS environments.
 
-### 2. Staging Deployment
-*   **Trigger**: Push to `staging`.
-*   **Action**: Builds Docker image, pushes to GHCR, updates ECS Service `madabank-staging`.
+*   **CI Checks**: runs `lint`, `test`, `build` on every Push/PR.
+*   **Dev/Staging Deploy**: Pushes Docker image to GHCR -> Updates AWS ECS Service via Terraform/AWS CLI.
 
-### 3. Production Deployment
+### 2. Jenkins (Production CD)
+Jenkins runs on the private VPS and manages the Production deployment to ensure strict control and security within the private network.
+
 *   **Trigger**: Push to `main`.
-*   **Action**: Builds Docker image, pushes to GHCR with `latest` tag, updates ECS Service `madabank-prod`.
-*   **Strategy**: Uses Rolling Update (Min 100%, Max 200%) for zero-downtime.
+*   **Pipeline**:
+    1.  Test & Build Docker Image.
+    2.  Push to GHCR (`:latest`).
+    3.  **Deployment**: Pulls the new image and re-ups the Docker Compose service.
+    4.  **Release**: Tags the commit on GitHub.
+
+👉 **[See Jenkins Setup Guide](JENKINS_SETUP.md)**
 
 ---
 
-## 🏗️ Infrastructure Provisioning (Terraform)
+## 🛠️ Infrastructure Provisioning
 
-If building the infrastructure from scratch (or disaster recovery), follow these steps.
+### 1. Private VPS (Production)
+We use Ansible or Shell Scripts to provision the bare metal VPS.
 
-### Prerequisites
-*   Terraform v1.5+
-*   AWS CLI configured with Admin credentials
-*   S3 Bucket for Terraform State (Created manually or via bootstrap script)
+*   **Setup Script**: `scripts/vps/setup_vps.sh`
+*   **Ansible Playbook**: `ansible/playbook.yml`
 
-### Step 1: Initialize & Apply Development
+👉 **[See VPS Setup Guide](VPS_SETUP.md)**
+
+### 2. AWS (Dev/Staging)
+We use Terraform to manage the AWS infrastructure.
+
+**Prerequisites:** Ubuntu/Mac with Terraform v1.5+ and AWS CLI.
+
 ```bash
+# Apply Development Infrastructure
 cd terraform/environments/dev
 terraform init
-terraform apply -var="docker_password=YOUR_GH_TOKEN"
-```
-
-### Step 2: Initialize & Apply Staging
-```bash
-cd terraform/environments/staging
-terraform init
-terraform apply -var="docker_password=YOUR_GH_TOKEN"
-```
-
-### Step 3: Initialize & Apply Production
-```bash
-cd terraform/environments/prod
-terraform init
-terraform apply -var="docker_password=YOUR_GH_TOKEN"
+terraform apply
 ```
 
 ---
 
 ## 🕵️ Troubleshooting
 
-### "Context Deadline Exceeded" (ECS)
-*   **Cause**: Container cannot reach Internet/SecretsManager.
-*   **Fix**: Check NAT Gateway status or Security Group Egress rules. Ensure `single_nat_gateway` is configured correctly for cost savings.
+### Jenkins Deployment Failed
+*   **Logs**: Check Jenkins Dashboard at `jenkins.madabank.art`.
+*   **Docker**: SSH into VPS and check `docker logs madabank-api-prod`.
 
-### "AddressLimitExceeded" (EIP)
-*   **Cause**: You hit the limit of 5 Elastic IPs.
-*   **Fix**: Ensure `dev` and `staging` use `single_nat_gateway = true` to save IPs. Use the `scripts/manage-*.sh` tools to verify environment state.
+### AWS ECS Context Deadline Exceeded
+*   **Cause**: Container cannot reach Internet/SecretsManager.
+*   **Fix**: Check NAT Gateway status or Security Group Egress rules.

@@ -47,7 +47,7 @@ COPY --from=builder /app/bin/migrate .
 COPY --from=builder /app/migrations ./migrations
 
 # Copy entrypoint script
-COPY scripts/entrypoint.sh ./entrypoint.sh
+COPY scripts/docker/entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 
 # Set ownership

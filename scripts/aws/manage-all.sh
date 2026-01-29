@@ -14,17 +14,17 @@ echo "========================================"
 # Dev
 echo
 echo "--- Development ---"
-./scripts/cost-saver.sh "$ACTION" dev
+./scripts/aws/cost-saver.sh "$ACTION" dev
 
 # Staging
 echo
 echo "--- Staging ---"
-./scripts/cost-saver.sh "$ACTION" staging
+./scripts/aws/cost-saver.sh "$ACTION" staging
 
 # Prod
 echo
 echo "--- Production ---"
-./scripts/cost-saver.sh "$ACTION" prod
+./scripts/aws/cost-saver.sh "$ACTION" prod
 
 echo
 echo "✅ All environments processed."

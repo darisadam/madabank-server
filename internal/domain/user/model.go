@@ -31,7 +31,8 @@ type CreateUserRequest struct {
 }
 
 type LoginRequest struct {
-	Email    string `json:"email" binding:"required,email"`
+	Email    string `json:"email,omitempty"` // Either Email or Phone is required
+	Phone    string `json:"phone,omitempty"` // Either Email or Phone is required
 	Password string `json:"password" binding:"required"`
 }
 

@@ -30,6 +30,12 @@ func NewAccountService(accountRepo repository.AccountRepository) AccountService 
 }
 
 func (s *accountService) CreateAccount(userID uuid.UUID, req *account.CreateAccountRequest) (*account.Account, error) {
+	// Check max accounts limit (3 per user)
+	existingAccounts, err := s.accountRepo.GetByUserID(userID)
+	if err == nil && len(existingAccounts) >= 3 {
+		return nil, fmt.Errorf("maximum of 3 accounts allowed per user")
+	}
+
 	// Validate account type
 	var accountType account.AccountType
 	switch req.AccountType {

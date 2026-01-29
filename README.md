@@ -41,7 +41,7 @@ Our automated pipeline includes:
 - **Testing**: Unit tests with 70%+ coverage
 - **Security Scanning**: Gosec, Trivy, Nancy
 - **Docker Build**: Multi-stage optimized builds
-- **Automated Deployment**: ECS Fargate (staging/production)
+- **Automated Deployment**: AWS ECS (Dev/Staging) & Private VPS (Production via Jenkins)
 
 ### Running CI Checks Locally
 ```bash
@@ -89,9 +89,9 @@ See [SECURITY.md](docs/SECURITY.md) for details.
 | **Database** | PostgreSQL 16 | ACID compliance |
 | **Cache** | Redis 7 | Session & rate limiting |
 | **Container** | Docker | Portability |
-| **Orchestration** | ECS Fargate | Cost-effective deployment |
-| **IaC** | Terraform | Infrastructure automation |
-| **CI/CD** | GitHub Actions | Automated pipelines |
+| **Orchestration** | ECS (Dev) / Docker Compose (Prod) | Hybrid Cloud Strategy |
+| **IaC** | Terraform & Ansible | Infrastructure automation |
+| **CI/CD** | GitHub Actions & Jenkins | Hybrid Pipeline |
 | **Monitoring** | Prometheus + Grafana | Observability |
 | **Security** | Gosec, Trivy | Vulnerability scanning |
 
@@ -126,9 +126,9 @@ We utilize a **Tuple Deployment Strategy** with fully isolated environments mana
 
 | Environment | Branch | URL | Infrastructure |
 |-------------|--------|-----|----------------|
-| **Development** | `develop` | `api-dev.madabank.art` | Cost-Optimized (Single AZ) |
-| **Staging** | `staging` | `api-staging.madabank.art` | QA Replica (Single AZ) |
-| **Production** | `main` | `api.madabank.art` | **High Availability (Multi-AZ)** |
+| **Development** | `develop` | `api-dev.madabank.art` | AWS ECS (Single AZ) |
+| **Staging** | `staging` | `api-staging.madabank.art` | AWS ECS (Single AZ) |
+| **Production** | `main` | `api.madabank.art` | **Private VPS (Docker Compose)** |
 
 👉 **[Read the Full Deployment Guide](docs/DEPLOYMENT.md)**
 
