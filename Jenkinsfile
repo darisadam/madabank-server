@@ -60,14 +60,22 @@ pipeline {
         stage('Setup Go') {
             steps {
                 sh '''
-                    export PATH=$PATH:/usr/local/go/bin
+                    # Add common Go paths to PATH
+                    export PATH=$PATH:$HOME/go/bin:$HOME/sdk/go${GO_VERSION}/bin
+                    
                     if ! command -v go &> /dev/null; then
-                        echo "Installing Go ${GO_VERSION}..."
+                        echo "Installing Go ${GO_VERSION} locally..."
                         curl -sLO https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz
-                        sudo rm -rf /usr/local/go
-                        sudo tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz
+                        
+                        # Install to $HOME/go_dist instead of /usr/local/go
+                        mkdir -p $HOME/go_dist
+                        tar -C $HOME/go_dist -xzf go${GO_VERSION}.linux-amd64.tar.gz
                         rm go${GO_VERSION}.linux-amd64.tar.gz
+                        
+                        # Update PATH for this script execution
+                        export PATH=$PATH:$HOME/go_dist/go/bin
                     fi
+                    
                     go version
                 '''
             }
@@ -79,7 +87,7 @@ pipeline {
         stage('Dependencies') {
             steps {
                 sh '''
-                    export PATH=$PATH:/usr/local/go/bin
+                    export PATH=$PATH:$HOME/go_dist/go/bin:$HOME/go/bin
                     go mod download
                     go mod verify
                 '''
@@ -92,7 +100,7 @@ pipeline {
         stage('Lint') {
             steps {
                 sh '''
-                    export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
+                    export PATH=$PATH:$HOME/go_dist/go/bin:$HOME/go/bin
                     
                     # Check code formatting
                     fmt_output=$(gofmt -l .)
@@ -120,13 +128,13 @@ pipeline {
         stage('Test') {
             steps {
                 sh '''
-                    export PATH=$PATH:/usr/local/go/bin
+                    export PATH=$PATH:$HOME/go_dist/go/bin:$HOME/go/bin
                     go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
                 '''
             }
             post {
                 always {
-                    sh 'go tool cover -html=coverage.out -o coverage.html 2>/dev/null || true'
+                    sh 'export PATH=$PATH:$HOME/go_dist/go/bin && go tool cover -html=coverage.out -o coverage.html 2>/dev/null || true'
                     archiveArtifacts artifacts: 'coverage.html,coverage.out', allowEmptyArchive: true
                 }
             }
@@ -138,7 +146,7 @@ pipeline {
         stage('Security') {
             steps {
                 sh '''
-                    export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
+                    export PATH=$PATH:$HOME/go_dist/go/bin:$HOME/go/bin
                     
                     # Install gosec if not present
                     if ! command -v gosec &> /dev/null; then
@@ -170,7 +178,7 @@ pipeline {
         stage('Build Binary') {
             steps {
                 sh '''
-                    export PATH=$PATH:/usr/local/go/bin
+                    export PATH=$PATH:$HOME/go_dist/go/bin:$HOME/go/bin
                     export CGO_ENABLED=0
                     export GOOS=linux
                     export GOARCH=amd64
