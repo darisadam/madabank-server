@@ -17,17 +17,17 @@ pipeline {
         FULL_IMAGE = "${REGISTRY}/${IMAGE_NAME}"
         
         // Go Version
-        GO_VERSION = '1.24'
+        GO_VERSION = '1.24.0'
         
         // VPS Production Directory (existing infrastructure)
         DEPLOY_DIR = '/opt/madabankapp'
         
-        // Environment Files (stored in Jenkins credentials as secret files)
-        ENV_PROD = credentials('madabank-env-prod')
+        // Environment Files (Removed: unused)
+        // ENV_PROD = credentials('madabank-env-prod')
         
-        // Docker Registry Credentials
-        DOCKER_USERNAME = credentials('github-registry-username')
-        DOCKER_PASSWORD = credentials('github-registry-password')
+        // Docker Registry Credentials (Removed: reusing github-git-creds)
+        // DOCKER_USERNAME = credentials('github-registry-username')
+        // DOCKER_PASSWORD = credentials('github-registry-password')
     }
     
     options {
@@ -43,7 +43,17 @@ pipeline {
         // =====================================================================
         stage('Checkout') {
             steps {
-                checkout scm
+                checkout([
+                    $class: 'GitSCM',
+                    branches: scm.branches,
+                    doGenerateSubmoduleConfigurations: false,
+                    extensions: [
+                        [$class: 'CloneOption', depth: 1, noTags: false, reference: '', shallow: true, timeout: 60],
+                        [$class: 'WipeWorkspace']
+                    ],
+                    submoduleCfg: [],
+                    userRemoteConfigs: scm.userRemoteConfigs
+                ])
                 script {
                     env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                     env.GIT_BRANCH_NAME = sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
@@ -60,14 +70,22 @@ pipeline {
         stage('Setup Go') {
             steps {
                 sh '''
-                    export PATH=$PATH:/usr/local/go/bin
+                    # Add common Go paths to PATH
+                    export PATH=$PATH:$HOME/go/bin:$HOME/sdk/go${GO_VERSION}/bin
+                    
                     if ! command -v go &> /dev/null; then
-                        echo "Installing Go ${GO_VERSION}..."
+                        echo "Installing Go ${GO_VERSION} locally..."
                         curl -sLO https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz
-                        sudo rm -rf /usr/local/go
-                        sudo tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz
+                        
+                        # Install to $HOME/go_dist instead of /usr/local/go
+                        mkdir -p $HOME/go_dist
+                        tar -C $HOME/go_dist -xzf go${GO_VERSION}.linux-amd64.tar.gz
                         rm go${GO_VERSION}.linux-amd64.tar.gz
+                        
+                        # Update PATH for this script execution
+                        export PATH=$PATH:$HOME/go_dist/go/bin
                     fi
+                    
                     go version
                 '''
             }
@@ -79,7 +97,7 @@ pipeline {
         stage('Dependencies') {
             steps {
                 sh '''
-                    export PATH=$PATH:/usr/local/go/bin
+                    export PATH=$PATH:$HOME/go_dist/go/bin:$HOME/go/bin
                     go mod download
                     go mod verify
                 '''
@@ -92,7 +110,9 @@ pipeline {
         stage('Lint') {
             steps {
                 sh '''
-                    export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
+                    export PATH=$PATH:$HOME/go_dist/go/bin:$HOME/go/bin
+                    # Reduce memory usage (aggressive GC)
+                    export GOGC=20
                     
                     # Check code formatting
                     fmt_output=$(gofmt -l .)
@@ -109,7 +129,7 @@ pipeline {
                     if ! command -v golangci-lint &> /dev/null; then
                         curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $HOME/go/bin v1.64.5
                     fi
-                    golangci-lint run --timeout=5m
+                    golangci-lint run --timeout=5m --concurrency=2
                 '''
             }
         }
@@ -120,13 +140,14 @@ pipeline {
         stage('Test') {
             steps {
                 sh '''
-                    export PATH=$PATH:/usr/local/go/bin
-                    go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+                    export PATH=$PATH:$HOME/go_dist/go/bin:$HOME/go/bin
+                    # Note: -race removed to avoid CGO/GCC requirement on Jenkins agent
+                    go test -v -coverprofile=coverage.out -covermode=atomic ./...
                 '''
             }
             post {
                 always {
-                    sh 'go tool cover -html=coverage.out -o coverage.html 2>/dev/null || true'
+                    sh 'export PATH=$PATH:$HOME/go_dist/go/bin && go tool cover -html=coverage.out -o coverage.html 2>/dev/null || true'
                     archiveArtifacts artifacts: 'coverage.html,coverage.out', allowEmptyArchive: true
                 }
             }
@@ -138,7 +159,7 @@ pipeline {
         stage('Security') {
             steps {
                 sh '''
-                    export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
+                    export PATH=$PATH:$HOME/go_dist/go/bin:$HOME/go/bin
                     
                     # Install gosec if not present
                     if ! command -v gosec &> /dev/null; then
@@ -170,7 +191,7 @@ pipeline {
         stage('Build Binary') {
             steps {
                 sh '''
-                    export PATH=$PATH:/usr/local/go/bin
+                    export PATH=$PATH:$HOME/go_dist/go/bin:$HOME/go/bin
                     export CGO_ENABLED=0
                     export GOOS=linux
                     export GOARCH=amd64
@@ -187,76 +208,93 @@ pipeline {
         }
 
         // =====================================================================
-        // STAGE 8: Build & Push Docker Image (only for staging/main)
+        // STAGE 8: Build & Push Docker Image
         // =====================================================================
         stage('Docker Build & Push') {
             when {
                 anyOf {
                     branch 'staging'
-                    branch 'main'
+                    // Build on PRs targeting main (preparation for deployment)
+                    allOf {
+                         changeRequest target: 'main'
+                    }
                 }
             }
             steps {
                 script {
-                    docker.withRegistry("https://${REGISTRY}", 'github-registry-credentials') {
-                        def customImage = docker.build("${FULL_IMAGE}:${BUILD_NUMBER}", "-f docker/Dockerfile.fast .")
-                        customImage.push()
-                        customImage.push('latest')
+                    // Use 'github-git-creds' for GHCR as well (same user/PAT)
+                    docker.withRegistry("https://${REGISTRY}", 'github-git-creds') {
+                        // For PRs, use the PR number or commit hash as tag
+                        def tag = env.CHANGE_ID ? "pr-${env.CHANGE_ID}" : "staging-${BUILD_NUMBER}"
                         
-                        if (env.BRANCH_NAME == 'main') {
-                            customImage.push("v1.0.${BUILD_NUMBER}")
+                        // Pass build args for OS/Arch
+                        def customImage = docker.build("${FULL_IMAGE}:${tag}", "--build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 -f docker/Dockerfile.fast .")
+                        customImage.push()
+                        
+                        // Also push as 'latest-staging' or 'latest-pr' for easy reference if needed
+                        if (env.BRANCH_NAME == 'staging') {
+                            customImage.push('staging-latest')
                         }
                     }
                 }
-                echo "✅ Docker image pushed: ${FULL_IMAGE}:${BUILD_NUMBER}"
+                echo "✅ Docker image pushed."
             }
         }
 
         // =====================================================================
-        // STAGE 9: Deploy to Production (only staging → main)
+        // STAGE 9: Deploy to Production (PR Staging -> Main)
         // =====================================================================
         stage('Deploy Production') {
             when {
-                branch 'main'
+                // RUNS ONLY ON PR targeting main
+                allOf {
+                    changeRequest target: 'main'
+                }
             }
             steps {
-                echo "🚀 Deploying to Production VPS..."
+                echo "🚀 Deploying to Production VPS (PR Preview/Release Candidate)..."
                 
-                // Deploy API service using docker compose
-                sh """
-                    cd \${DEPLOY_DIR}
+                script {
+                    def imageTag = "pr-${env.CHANGE_ID}"
                     
-                    # Login to GHCR
-                    echo \${DOCKER_PASSWORD} | docker login ghcr.io -u \${DOCKER_USERNAME} --password-stdin
-                    
-                    # Pull the new image
-                    docker pull \${FULL_IMAGE}:\${BUILD_NUMBER}
-                    docker tag \${FULL_IMAGE}:\${BUILD_NUMBER} \${FULL_IMAGE}:latest
-                    
-                    # Restart only the API service (other services stay running)
-                    docker compose stop api || true
-                    docker compose rm -f api || true
-                    docker compose up -d api
-                    
-                    # Wait for health check
-                    sleep 20
-                    
-                    # Verify deployment
-                    curl -sf http://localhost:8080/health || exit 1
-                    
-                    # Cleanup old images (keep last 3)
-                    docker images \${FULL_IMAGE} --format "{{.ID}} {{.Tag}}" | \\
-                        grep -v latest | sort -t. -k3 -n | head -n -3 | \\
-                        awk '{print \$1}' | xargs -r docker rmi 2>/dev/null || true
-                    
-                    echo "✅ Production deployment successful!"
-                """
+                    withCredentials([usernamePassword(credentialsId: 'github-git-creds', 
+                                                       passwordVariable: 'DOCKER_PASSWORD', 
+                                                       usernameVariable: 'DOCKER_USERNAME')]) {
+                        // Deploy API service using docker compose
+                        sh """
+                            cd ${DEPLOY_DIR}
+                            
+                            # Login to GHCR
+                            echo ${DOCKER_PASSWORD} | docker login ghcr.io -u ${DOCKER_USERNAME} --password-stdin
+                            
+                            # Pull the new image
+                            docker pull ${FULL_IMAGE}:${imageTag}
+                            
+                            # Retag as 'latest' locally on VPS so docker-compose uses it (assuming compose uses :latest or we update .env)
+                            # BETTER: Update the running service to use the specific tag or just force update if compose file uses :latest and we retag
+                            docker tag ${FULL_IMAGE}:${imageTag} ${FULL_IMAGE}:latest
+                            
+                            # Restart API service
+                            docker compose stop api || true
+                            docker compose rm -f api || true
+                            docker compose up -d api
+                            
+                            # Wait for health check
+                            sleep 20
+                            
+                            # Verify deployment
+                            curl -sf http://localhost:8080/health || exit 1
+                            
+                            echo "✅ Production deployment successful for PR-${env.CHANGE_ID}!"
+                        """
+                    }
+                }
             }
         }
 
 
         // =====================================================================
-        // STAGE 10: Create Release Tag (only for main)
+        // STAGE 10: Create Release Tag (only after merge to main)
         // =====================================================================
         stage('Release & Tag') {
             when {
@@ -271,7 +309,7 @@ pipeline {
                         git config user.name "Jenkins Bot"
                         
                         # Create annotated tag
-                        git tag -a v1.0.${BUILD_NUMBER} -m "Release v1.0.${BUILD_NUMBER}\\n\\nCommit: ${GIT_COMMIT_SHORT}\\nMessage: ${GIT_COMMIT_MSG}"
+                        git tag -a v1.0.${BUILD_NUMBER} -m "Release v1.0.${BUILD_NUMBER}\\nCommit: ${GIT_COMMIT_SHORT}"
                         
                         # Push tag
                         git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/${IMAGE_NAME}.git v1.0.${BUILD_NUMBER}
@@ -322,7 +360,14 @@ pipeline {
             """
         }
         always {
-            cleanWs()
+            script {
+                try {
+                    cleanWs()
+                } catch (e) {
+                    echo "Warning: Failed to clean workspace (likely early pipeline failure): ${e.getMessage()}"
+                    // e.printStackTrace() // Suppress stack trace to reduce noise
+                }
+            }
         }
     }
 }
