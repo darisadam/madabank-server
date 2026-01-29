@@ -1,30 +1,35 @@
+# ============================================================================
+# Jenkins CI/CD Docker Compose - Security Hardened
+# ============================================================================
+# IMPORTANT: Before starting, run on host:
+#   sudo groupadd -g 998 docker-jenkins 2>/dev/null || true
+#   sudo usermod -aG docker-jenkins jenkins 2>/dev/null || true
+# ============================================================================
+
 services:
   # ============================================
-  # Jenkins Controller (Docker-in-Docker)
+  # Jenkins Controller
   # ============================================
   jenkins:
     image: jenkins/jenkins:lts-jdk17
     container_name: madabank-jenkins
     restart: always
-    privileged: true
-    user: root
+    # Use Jenkins default UID (1000) with docker group GID from host
+    # To find docker GID: stat -c '%g' /var/run/docker.sock
+    user: "1000:${DOCKER_GID:-998}"
     ports:
-      - "8080:8080"      # Jenkins Web UI
-      - "50000:50000"    # Jenkins Agent Port
+      - "127.0.0.1:8080:8080"   # Bind to localhost only (Nginx handles external)
+      - "127.0.0.1:50000:50000" # Jenkins Agent Port
     environment:
-      - JAVA_OPTS=-Djenkins.install.runSetupWizard=false
+      - JAVA_OPTS=-Djenkins.install.runSetupWizard=true -Dhudson.footerURL=
       - DOCKER_HOST=unix:///var/run/docker.sock
     volumes:
       # Jenkins home directory
       - jenkins_home:/var/jenkins_home
-      # Docker socket for Docker-in-Docker
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Docker binary from host
-      - /usr/bin/docker:/usr/bin/docker
-      # Docker Compose binary from host
-      - /usr/local/bin/docker-compose:/usr/local/bin/docker-compose
-      # Project environment files (mounted from host)
-      - ${ENV_FILES_PATH:-/opt/madabank/envs}:/opt/madabank/envs:ro
+      # Docker socket (read-only for security)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Docker CLI binary from host (read-only)
+      - /usr/bin/docker:/usr/bin/docker:ro
     networks:
       - jenkins-network
     healthcheck:
@@ -33,6 +38,9 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+    # Security options
+    security_opt:
+      - no-new-privileges:true
 
   # ============================================
   # Nginx Reverse Proxy for Jenkins
@@ -41,9 +49,11 @@ services:
     image: nginx:alpine
     container_name: madabank-jenkins-nginx
     restart: always
+    # Run as non-root nginx user (UID 101 in Alpine)
+    user: "101:101"
     ports:
-      - "80:80"
-      - "443:443"
+      - "80:8080"    # Redirect to HTTPS
+      - "443:8443"   # HTTPS
     volumes:
       - ./nginx/jenkins.conf:/etc/nginx/conf.d/default.conf:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
@@ -52,6 +62,8 @@ services:
       - jenkins
     networks:
       - jenkins-network
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   jenkins_home:
