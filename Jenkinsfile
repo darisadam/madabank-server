@@ -59,8 +59,9 @@ pipeline {
                     env.GIT_BRANCH_NAME = sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
                     env.GIT_COMMIT_MSG = sh(script: 'git log -1 --pretty=%s', returnStdout: true).trim()
                 }
-                echo "Branch: ${env.GIT_BRANCH_NAME}"
+                echo "Branch: ${env.GIT_BRANCH_NAME} (Env: ${env.BRANCH_NAME})"
                 echo "Commit: ${env.GIT_COMMIT_SHORT} - ${env.GIT_COMMIT_MSG}"
+                echo "PR Target: ${env.CHANGE_TARGET} (Change ID: ${env.CHANGE_ID})"
             }
         }
 
