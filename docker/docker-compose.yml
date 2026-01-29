@@ -1,141 +1,354 @@
-
 services:
+# ============================================
+# PostgreSQL Database
+# ============================================
   postgres:
     image: postgres:15-alpine
-    container_name: madabank-postgres
+    container_name: postgres
+    restart: always
     environment:
-      POSTGRES_USER: madabank
-      POSTGRES_PASSWORD: dev_password_change_in_prod
-      POSTGRES_DB: madabank
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql/data
+      - ./backups/postgres:/backups
+    networks:
+      - backend
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U madabank"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - madabank-network
+    deploy:
+      resources:
+        limits:
+          memory: 2560M
+          cpus: '0.5'
+        reservations:
+          memory: 2G
+          cpus: '0.3'
+    shm_size: 256mb
 
+# ============================================
+# Redis Cache
+# ============================================
   redis:
     image: redis:7-alpine
-    container_name: madabank-redis
-    ports:
-      - "6379:6379"
+    container_name: redis
+    restart: always
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    command:
+      - redis-server
+      - --maxmemory
+      - 512mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${REDIS_PASSWORD}
     volumes:
-      - redis_data:/data
+      - redis-data:/data
+    networks:
+      - backend
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
-    networks:
-      - madabank-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.1'
 
+# ============================================
+# Nginx Reverse Proxy
+# ============================================
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - nginx-logs:/var/log/nginx
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+    networks:
+      - frontend
+      - backend
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.2'
+
+# ============================================
+# Certbot (SSL Certificates)
+# ============================================
+  certbot:
+    image: certbot/certbot:latest
+    container_name: certbot
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+# ============================================
+# Prometheus (Metrics)
+# ============================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: always
+    user: "65534:65534"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks:
+      - monitoring
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.2'
+
+# ============================================
+# Node Exporter (System Metrics)
+# ============================================
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    restart: always
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    ports:
+      - "127.0.0.1:9100:9100"
+    networks:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.05'
+
+# ============================================
+# PostgreSQL Exporter (DB Metrics)
+# ============================================
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: postgres-exporter
+    restart: always
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}?sslmode=disable"
+    ports:
+      - "127.0.0.1:9187:9187"
+    depends_on:
+      - postgres
+    networks:
+      - monitoring
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.05'
+
+# ============================================
+# Grafana (Visualization)
+# ============================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: always
+    user: "472:472"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=https://monitoring.madabank.art
+      - GF_SERVER_DOMAIN=monitoring.madabank.art
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+          cpus: '0.2'
+
+# ============================================
+# Loki (Log Aggregation)
+# ============================================
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    restart: always
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "127.0.0.1:3100:3100"
+    networks:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 200M
+          cpus: '0.1'
+
+# ============================================
+# Promtail (Log Shipper)
+# ============================================
+  promtail:
+    image: grafana/promtail:latest
+    container_name: promtail
+    restart: always
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./promtail/promtail-config.yaml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /opt/madabankapp/logs:/app-logs:ro
+    depends_on:
+      - loki
+    networks:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.1'
+
+# ============================================
+# Jenkins CI/CD Server
+# ============================================
+  jenkins:
+    image: jenkins/jenkins:lts-jdk21
+    container_name: jenkins
+    restart: always
+    # Use standard UID 1000 and group from DOCKER_GID
+    user: "1000:${DOCKER_GID:-999}"
+    # CRITICAL FIX: Ensure user is added to the docker group
+    group_add:
+      - "${DOCKER_GID:-999}"
+    environment:
+      - JAVA_OPTS=-Djenkins.install.runSetupWizard=true
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - jenkins-data:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /usr/bin/docker:/usr/bin/docker:ro
+    ports:
+      - "127.0.0.1:8081:8080"
+    networks:
+      - frontend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+    security_opt:
+      - no-new-privileges:true
+
+# ============================================
+# MadaBank API Application
+# ============================================
   api:
     image: ghcr.io/darisadam/madabank-server:latest
-    container_name: madabank-api-prod
+    container_name: madabank-api
     restart: always
     env_file:
       - .env
-    # Environment variables will be loaded from the .env file injected by Jenkins
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
-      - ../logs:/home/madabank/logs
+      - ./logs/api:/home/madabank/logs
     networks:
-      - madabank-network
+      - frontend
+      - backend
+      - monitoring
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+    security_opt:
+      - no-new-privileges:true
 
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: madabank-prometheus
-    ports:
-      - "9090:9090"
-    volumes:
-      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ../monitoring/prometheus/rules:/etc/prometheus/rules
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--web.enable-lifecycle'
-    networks:
-      - madabank-network
-
-  grafana:
-    image: grafana/grafana:latest
-    container_name: madabank-grafana
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ../monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
-      - ../monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
-    networks:
-      - madabank-network
-
-  # PostgreSQL Exporter for Prometheus
-  postgres-exporter:
-    image: prometheuscommunity/postgres-exporter:latest
-    container_name: madabank-postgres-exporter
-    environment:
-      DATA_SOURCE_NAME: "postgresql://madabank:dev_password_change_in_prod@postgres:5432/madabank?sslmode=disable"
-    ports:
-      - "9187:9187"
-    depends_on:
-      - postgres
-    networks:
-      - madabank-network
-
-  # Redis Exporter for Prometheus
-  redis-exporter:
-    image: oliver006/redis_exporter:latest
-    container_name: madabank-redis-exporter
-    environment:
-      REDIS_ADDR: "redis:6379"
-    ports:
-      - "9121:9121"
-    depends_on:
-      - redis
-    networks:
-      - madabank-network
-
-  # Node Exporter for system metrics
-  node-exporter:
-    image: prom/node-exporter:latest
-    container_name: madabank-node-exporter
-    ports:
-      - "9100:9100"
-    command:
-      - '--path.procfs=/host/proc'
-      - '--path.sysfs=/host/sys'
-      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
-    networks:
-      - madabank-network
-
-volumes:
-  postgres_data:
-  redis_data:
-  prometheus_data:
-  grafana_data:
-
+# ============================================
+# Networks
+# ============================================
 networks:
-  madabank-network:
+  frontend:
     driver: bridge
+  backend:
+    driver: bridge
+  monitoring:
+    driver: bridge
+
+# ============================================
+# Volumes
+# ============================================
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  nginx-logs:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  loki-data:
+    driver: local
+  jenkins-data:
+    driver: local
