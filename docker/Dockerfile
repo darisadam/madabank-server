@@ -33,7 +33,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 FROM alpine:latest
 
 # Install runtime dependencies
-RUN apk --no-cache add ca-certificates tzdata curl
+RUN apk --no-cache add ca-certificates tzdata curl redis
 
 # Create non-root user
 RUN addgroup -g 1000 madabank && \
