@@ -213,7 +213,7 @@ pipeline {
         // =====================================================================
         stage('Docker Build & Push') {
             when {
-                branch 'staging'
+                branch 'main'
             }
             steps {
                 script {
@@ -241,7 +241,7 @@ pipeline {
         // =====================================================================
         stage('Deploy Production') {
             when {
-                branch 'staging'
+                branch 'main'
             }
             steps {
                 echo "🚀 Deploying to Production VPS (PR Preview/Release Candidate)..."
