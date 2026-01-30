@@ -17,7 +17,7 @@ pipeline {
         FULL_IMAGE = "${REGISTRY}/${IMAGE_NAME}"
         
         // Go Version
-        GO_VERSION = '1.24.0'
+        GO_VERSION = '1.24.12'
         
         // VPS Production Directory (existing infrastructure)
         DEPLOY_DIR = '/opt/madabankapp'
