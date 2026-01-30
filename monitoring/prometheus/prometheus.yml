@@ -18,7 +18,7 @@ scrape_configs:
   - job_name: 'madabank-api'
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['madabank-api:8080']
+      - targets: ['madabank-api:3000']
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance
