@@ -3,7 +3,7 @@ module github.com/darisadam/madabank-server
 go 1.24.12
 
 require (
-	github.com/alicebob/miniredis/v2 v2.35.0
+	github.com/alicebob/miniredis/v2 v2.36.1
 	github.com/gin-contrib/cors v1.7.2
 	github.com/gin-gonic/gin v1.10.1
 	github.com/joho/godotenv v1.5.1
