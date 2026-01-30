@@ -1,5 +1,7 @@
 # Git
 .git
+.env
+.env.example
 .gitignore
 .github
 
@@ -18,10 +20,13 @@
 *.log
 logs/
 
-# Local binaries (except the ones we explicitly build for release)
-# We want to allow bin/ so Dockerfile.fast works
-# But we might want to ignore other build artifacts if they exist
-# For now, let's keep bin/ allowed because we use it.
+# Binaries
+bin/
+main
+app
+*.test
+*.out
+*.exe
 
 # Go
 vendor/
