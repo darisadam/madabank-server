@@ -9,6 +9,8 @@ else
     echo "Migration binary not found, skipping migrations."
 fi
 
+
+
 # Start the application
 echo "Starting application..."
 exec "$@"

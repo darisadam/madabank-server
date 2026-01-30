@@ -22,7 +22,17 @@ func main() {
 
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
-		log.Fatal("DATABASE_URL is not set")
+		host := os.Getenv("DB_HOST")
+		port := os.Getenv("DB_PORT")
+		user := os.Getenv("DB_USER")
+		name := os.Getenv("DB_NAME")
+		password := os.Getenv("DB_PASSWORD")
+
+		if host != "" && port != "" && user != "" && name != "" && password != "" {
+			databaseURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", user, url.QueryEscape(password), host, port, name)
+		} else {
+			log.Fatal("DATABASE_URL is not set and DB_* variables are missing")
+		}
 	}
 
 	// Inject password if present (from Secrets Manager)
