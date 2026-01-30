@@ -338,7 +338,17 @@ func collectSystemMetrics(db *sql.DB) {
 func initDB() (*sql.DB, error) {
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
-		return nil, fmt.Errorf("DATABASE_URL environment variable is required")
+		host := os.Getenv("DB_HOST")
+		port := os.Getenv("DB_PORT")
+		user := os.Getenv("DB_USER")
+		name := os.Getenv("DB_NAME")
+		password := os.Getenv("DB_PASSWORD")
+
+		if host != "" && port != "" && user != "" && name != "" && password != "" {
+			databaseURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", user, url.QueryEscape(password), host, port, name)
+		} else {
+			return nil, fmt.Errorf("DATABASE_URL environment variable is required and DB_* variables are missing")
+		}
 	}
 
 	// Inject password if present (from Secrets Manager)
@@ -366,13 +376,24 @@ func initDB() (*sql.DB, error) {
 }
 
 func initRedis() *redis.Client {
-	redisAddr := os.Getenv("REDIS_URL")
-	if redisAddr == "" {
-		redisAddr = "localhost:6379"
+	var addr, password string
+
+	host := os.Getenv("REDIS_HOST")
+	port := os.Getenv("REDIS_PORT")
+	password = os.Getenv("REDIS_PASSWORD")
+
+	if host != "" && port != "" {
+		addr = fmt.Sprintf("%s:%s", host, port)
+	} else {
+		addr = os.Getenv("REDIS_URL")
+		if addr == "" {
+			addr = "localhost:6379"
+		}
 	}
 
 	opts := &redis.Options{
-		Addr: redisAddr,
+		Addr:     addr,
+		Password: password,
 	}
 
 	client := redis.NewClient(opts)

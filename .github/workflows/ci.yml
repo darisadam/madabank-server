@@ -1,114 +1,90 @@
+name: Go CI
+
 on:
   push:
-    branches: [ develop, staging, main ]
+    branches: [ "main", "develop", "staging" ]
   pull_request:
-    types: [opened, synchronize, reopened]
-    branches: [ develop, staging, main ]
-
-permissions:
-  contents: write
-  pull-requests: write
-  checks: read
-
-env:
-  GO_VERSION: '1.24'
+    branches: [ "main", "develop", "staging" ]
 
 jobs:
-  # ===========================================================================
-  # Validation Jobs (Lint & Test)
-  # ===========================================================================
-  validate:
-    name: Code Quality & Tests
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Install dependencies
-        run: go mod download
-
-      - name: Run go fmt
-        run: |
-          fmt_output=$(gofmt -l .)
-          if [ -n "$fmt_output" ]; then
-            echo "❌ The following files are not formatted:"
-            echo "$fmt_output"
-            exit 1
-          fi
-
-      - name: Run go vet
-        run: go vet ./...
-
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v1.64.5
-          args: --timeout=5m
-
-      - name: Run Unit Tests
-        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
-
-      - name: Upload coverage
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-report
-          path: coverage.out
-
-  # ===========================================================================
-  # Docker Build Check (Speed up feedback loop before Jenkins)
-  # ===========================================================================
-  docker-check:
-    name: Docker Build Check
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
+          go-version: '1.24.12'
+          check-latest: true
 
-      - name: Build Binaries for Docker
-        env:
-          GOOS: linux
-          GOARCH: amd64
-          CGO_ENABLED: 0
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: latest
+          args: --timeout=5m
+
+      - name: Check formatting
         run: |
-          mkdir -p bin
-          go build -ldflags "-s -w" -o bin/api-linux-amd64 cmd/api/main.go
-          go build -ldflags "-s -w" -o bin/migrate-linux-amd64 cmd/migrate/main.go
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Go code is not formatted:"
+            gofmt -l .
+            exit 1
+          fi
 
-      - name: Build Docker Image (Dry Run)
-        run: docker build -f docker/Dockerfile.fast .
-
-  # ===========================================================================
-  # Auto-Merge Logic (Conditional)
-  # ===========================================================================
-  auto-merge:
-    name: Enable Auto-Merge
+  test:
+    name: Test
     runs-on: ubuntu-latest
-    needs: [validate, docker-check]
-    if: github.event_name == 'pull_request' && github.actor == 'darisadam'
     steps:
-      - name: Enable auto-merge for develop (Rebase)
-        if: github.base_ref == 'develop'
-        run: gh pr merge --auto --rebase "$PR_URL"
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@v4
 
-      - name: Enable auto-merge for Staging/Main (Merge Commit)
-        if: github.base_ref == 'staging' || github.base_ref == 'main'
-        run: gh pr merge --auto --merge "$PR_URL"
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.12'
+          check-latest: true
+
+      - name: Run Unit Tests
+        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Gosec Security Scanner
+        uses: securego/gosec@master
+        with:
+          args: ./...
+
+      - name: Govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+           go-version-input: '1.24.12'
+
+  build:
+    name: Build Verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.12'
+          check-latest: true
+
+      - name: Build API Binary
+        run: |
+            mkdir -p bin
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -o bin/api-linux-amd64 ./cmd/api
+
+      - name: Build Migration Binary
+        run: |
+            mkdir -p bin
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -o bin/migrate-linux-amd64 ./cmd/migrate

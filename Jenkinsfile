@@ -17,7 +17,7 @@ pipeline {
         FULL_IMAGE = "${REGISTRY}/${IMAGE_NAME}"
         
         // Go Version
-        GO_VERSION = '1.24.0'
+        GO_VERSION = '1.24.12'
         
         // VPS Production Directory (existing infrastructure)
         DEPLOY_DIR = '/opt/madabankapp'
@@ -213,13 +213,7 @@ pipeline {
         // =====================================================================
         stage('Docker Build & Push') {
             when {
-                anyOf {
-                    branch 'staging'
-                    // Build on PRs targeting main (preparation for deployment)
-                    allOf {
-                         changeRequest target: 'main'
-                    }
-                }
+                branch 'main'
             }
             steps {
                 script {
@@ -247,38 +241,41 @@ pipeline {
         // =====================================================================
         stage('Deploy Production') {
             when {
-                // RUNS ONLY ON PR targeting main
-                allOf {
-                    changeRequest target: 'main'
-                }
+                branch 'main'
             }
             steps {
                 echo "🚀 Deploying to Production VPS (PR Preview/Release Candidate)..."
                 
                 script {
-                    def imageTag = "pr-${env.CHANGE_ID}"
+                    // Determine tag based on build type (must match Docker Build stage logic)
+                    def imageTag = env.CHANGE_ID ? "pr-${env.CHANGE_ID}" : "staging-${env.BUILD_NUMBER}"
                     
                     withCredentials([usernamePassword(credentialsId: 'github-git-creds', 
                                                        passwordVariable: 'DOCKER_PASSWORD', 
                                                        usernameVariable: 'DOCKER_USERNAME')]) {
                         // Deploy API service using docker compose
-                        sh """
-                            cd ${DEPLOY_DIR}
+                        env.IMAGE_TAG = imageTag
+                        sh '''
+                            cd $DEPLOY_DIR
                             
-                            # Login to GHCR
-                            echo ${DOCKER_PASSWORD} | docker login ghcr.io -u ${DOCKER_USERNAME} --password-stdin
+                            # Login to GHCR (Password via env var is safe)
+                            echo $DOCKER_PASSWORD | docker login ghcr.io -u $DOCKER_USERNAME --password-stdin
                             
                             # Pull the new image
-                            docker pull ${FULL_IMAGE}:${imageTag}
+                            docker pull $FULL_IMAGE:$IMAGE_TAG
                             
-                            # Retag as 'latest' locally on VPS so docker-compose uses it (assuming compose uses :latest or we update .env)
-                            # BETTER: Update the running service to use the specific tag or just force update if compose file uses :latest and we retag
-                            docker tag ${FULL_IMAGE}:${imageTag} ${FULL_IMAGE}:latest
+                            # Retag as 'latest' locally on VPS
+                            docker tag $FULL_IMAGE:$IMAGE_TAG $FULL_IMAGE:latest
                             
-                            # Restart API service
-                            docker compose stop api || true
-                            docker compose rm -f api || true
-                            docker compose up -d api
+                            # Restart API service using a transient container with docker compose support
+                            # This avoids needing to mount CLI plugins from the host
+                            docker run --rm \\
+                                -v /var/run/docker.sock:/var/run/docker.sock \\
+                                -v "$DEPLOY_DIR:$DEPLOY_DIR" \\
+                                -v /var/jenkins_home/.docker/config.json:/root/.docker/config.json \\
+                                -w "$DEPLOY_DIR" \\
+                                docker:latest \\
+                                compose up -d --force-recreate api
                             
                             # Wait for health check
                             sleep 20
@@ -286,8 +283,8 @@ pipeline {
                             # Verify deployment
                             curl -sf http://localhost:8080/health || exit 1
                             
-                            echo "✅ Production deployment successful for PR-${env.CHANGE_ID}!"
-                        """
+                            echo "✅ Production deployment successful for PR-${CHANGE_ID}!"
+                        '''
                     }
                 }
             }
